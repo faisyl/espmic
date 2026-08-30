@@ -10,10 +10,14 @@
 #include <arpa/inet.h>
 
 #include "freertos/task.h"
+#include "esp_task_wdt.h"
 #include "esp_log.h"
 #include "rtp_packet.h"
 
 static const char *TAG = "rtp_sender";
+
+/* Bounded wait for the queue lock (spec Section 14: no indefinite waits). */
+#define RTP_LOCK_TIMEOUT_MS 50
 
 /* One RTP packet = 12-byte header + one Opus packet. Bound the payload to keep
  * the datagram within a typical MTU. */
@@ -39,10 +43,21 @@ static void rtp_task(void *arg)
     ESP_LOGI(TAG, "rtp task started -> %s:%u", ctx->cfg.dest_ip,
              (unsigned)ctx->cfg.dest_port);
 
+    /* Watchdog-subscribe this critical loop (spec Section 14). */
+    esp_task_wdt_add(NULL);
+
     while (ctx->running) {
+        esp_task_wdt_reset();
+
         size_t len = 0;
         int popped = 0;
-        if (ctx->cfg.queue_lock) xSemaphoreTake(ctx->cfg.queue_lock, portMAX_DELAY);
+        if (ctx->cfg.queue_lock) {
+            if (xSemaphoreTake(ctx->cfg.queue_lock,
+                               pdMS_TO_TICKS(RTP_LOCK_TIMEOUT_MS)) != pdTRUE) {
+                vTaskDelay(pdMS_TO_TICKS(5)); /* contended; retry, never block */
+                continue;
+            }
+        }
         popped = eq_pop(ctx->cfg.queue, opus, sizeof(opus), &len);
         if (ctx->cfg.queue_lock) xSemaphoreGive(ctx->cfg.queue_lock);
 
@@ -73,6 +88,7 @@ static void rtp_task(void *arg)
         ctx->stats.last_timestamp = ctx->rtp.timestamp;
     }
 
+    esp_task_wdt_delete(NULL);
     ESP_LOGI(TAG, "rtp task exiting: sent=%llu errs=%llu",
              (unsigned long long)ctx->stats.packets_sent,
              (unsigned long long)ctx->stats.send_errors);

@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
 #include "esp_heap_caps.h"
+#include "esp_wifi.h"
 #include "esp_log.h"
 
 static const char *TAG = "health";
@@ -27,6 +28,12 @@ static void snapshot(void *arg)
     r.free_heap     = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT);
     r.min_free_heap = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
     r.free_psram    = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+
+    /* Current AP signal strength (spec Section 10 status). Returns an error and
+     * leaves rssi=0 when Wi-Fi is not initialised or not associated. */
+    wifi_ap_record_t ap;
+    r.wifi_rssi = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) ? ap.rssi : 0;
+
     audio_manager_get_stats(&r.audio);
 
     portENTER_CRITICAL(&g.mux);

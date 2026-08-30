@@ -3,5 +3,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES state_machine
     PRIV_REQUIRES esp-tls control_protocol json lwip
-                  audio_manager health_monitor nvs_config
+                  audio_manager health_monitor nvs_config nvs_flash
 )

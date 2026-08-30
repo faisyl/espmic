@@ -228,22 +228,33 @@ void audio_manager_get_stats(audio_stats_t *out)
     out->streaming = g.streaming;
     if (!g.streaming) return;
 
-    if (g.ring_lock) xSemaphoreTake(g.ring_lock, portMAX_DELAY);
-    out->pcm_overflow   = g.ring.overflow_count;
-    out->pcm_written    = g.ring.total_written;
-    out->pcm_read       = g.ring.total_read;
-    out->pcm_high_water = g.ring.high_water;
-    out->pcm_count      = g.ring.count;
-    if (g.ring_lock) xSemaphoreGive(g.ring_lock);
+    /* Bounded lock acquisition (spec Section 14: no indefinite waits). This
+     * runs in the health-snapshot (esp_timer) context; on contention we skip the
+     * contended sub-block for this tick rather than stall the reader. All lock
+     * holders bound their hold time, so contention here is transient. */
+    if (!g.ring_lock ||
+        xSemaphoreTake(g.ring_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+        out->pcm_overflow   = g.ring.overflow_count;
+        out->pcm_written    = g.ring.total_written;
+        out->pcm_read       = g.ring.total_read;
+        out->pcm_high_water = g.ring.high_water;
+        out->pcm_low_water  = g.ring.low_water; /* sentinel guarded by reporter */
+        out->pcm_count      = g.ring.count;
+        if (g.ring_lock) xSemaphoreGive(g.ring_lock);
+    } else {
+        out->pcm_low_water = (size_t)-1; /* unknown this tick */
+    }
 
-    if (g.queue_lock) xSemaphoreTake(g.queue_lock, portMAX_DELAY);
-    out->enc_drops      = g.queue.drop_count;
-    out->enc_rejects    = g.queue.reject_count;
-    out->enc_pushed     = g.queue.total_pushed;
-    out->enc_popped     = g.queue.total_popped;
-    out->enc_high_water = g.queue.high_water;
-    out->enc_count      = g.queue.count;
-    if (g.queue_lock) xSemaphoreGive(g.queue_lock);
+    if (!g.queue_lock ||
+        xSemaphoreTake(g.queue_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+        out->enc_drops      = g.queue.drop_count;
+        out->enc_rejects    = g.queue.reject_count;
+        out->enc_pushed     = g.queue.total_pushed;
+        out->enc_popped     = g.queue.total_popped;
+        out->enc_high_water = g.queue.high_water;
+        out->enc_count      = g.queue.count;
+        if (g.queue_lock) xSemaphoreGive(g.queue_lock);
+    }
 
     out->encoder_late = g.encoder_late;
     out->capture_late = g.capture_late;

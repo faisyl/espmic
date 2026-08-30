@@ -59,6 +59,7 @@ typedef struct {
     uint64_t pcm_written;
     uint64_t pcm_read;
     size_t   pcm_high_water;
+    size_t   pcm_low_water;   /* (size_t)-1 sentinel until first non-empty read */
     size_t   pcm_count;
     /* encoded queue */
     uint64_t enc_drops;

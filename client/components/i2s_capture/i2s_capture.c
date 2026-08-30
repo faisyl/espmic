@@ -7,9 +7,14 @@
 #include <stdlib.h>
 #include "driver/i2s_std.h"
 #include "freertos/task.h"
+#include "esp_task_wdt.h"
 #include "esp_log.h"
 
 static const char *TAG = "i2s_capture";
+
+/* Bounded wait for the ring lock (Jim's P2 nit): never block capture forever.
+ * On timeout we drop the DMA chunk and count it rather than stalling I2S. */
+#define RING_LOCK_TIMEOUT_MS 50
 
 /* DMA read chunk: 240 stereo frames = 5 ms at 48 kHz. Small enough to keep
  * latency low, large enough to amortise the read syscall. */
@@ -40,8 +45,14 @@ static void capture_task(void *arg)
     struct i2s_capture_ctx *ctx = (struct i2s_capture_ctx *)arg;
     static int32_t raw[CAP_SAMPLES_PER_READ]; /* DMA landing buffer */
 
+    /* Subscribe this critical loop to the Task WDT (spec Section 14). The DMA
+     * read timeout (200 ms) bounds every iteration well under the WDT period. */
+    esp_task_wdt_add(NULL);
+
     ESP_LOGI(TAG, "capture task started");
     while (ctx->running) {
+        esp_task_wdt_reset();
+
         size_t got = 0;
         esp_err_t err = i2s_channel_read(ctx->rx, raw, sizeof(raw), &got,
                                          pdMS_TO_TICKS(200));
@@ -57,10 +68,18 @@ static void capture_task(void *arg)
             raw[i] = slot_to_sample(raw[i]);
         }
 
-        /* Push under the ring lock. Never block capture indefinitely on the
-         * lock; the ring itself drops oldest on overflow (spec Section 14). */
+        /* Push under the ring lock with a bounded timeout (Jim's P2 nit): never
+         * block capture indefinitely on the lock. On timeout drop this chunk and
+         * count it; on success the ring itself drops oldest on overflow
+         * (spec Section 14). */
         if (ctx->cfg.ring_lock) {
-            xSemaphoreTake(ctx->cfg.ring_lock, portMAX_DELAY);
+            if (xSemaphoreTake(ctx->cfg.ring_lock,
+                               pdMS_TO_TICKS(RING_LOCK_TIMEOUT_MS)) != pdTRUE) {
+                if (ctx->cfg.late_counter) (*ctx->cfg.late_counter)++;
+                ESP_LOGW(TAG, "ring lock timeout; dropping %u samples",
+                         (unsigned)n);
+                continue;
+            }
         }
         pcm_ring_write(ctx->cfg.ring, raw, n);
         if (ctx->cfg.ring_lock) {
@@ -68,6 +87,7 @@ static void capture_task(void *arg)
         }
     }
 
+    esp_task_wdt_delete(NULL);
     ESP_LOGI(TAG, "capture task exiting");
     ctx->task = NULL;
     vTaskDelete(NULL);

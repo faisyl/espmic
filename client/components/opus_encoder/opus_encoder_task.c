@@ -7,9 +7,14 @@
 #include <string.h>
 #include "opus.h"
 #include "freertos/task.h"
+#include "esp_task_wdt.h"
 #include "esp_log.h"
 
 static const char *TAG = "opus_task";
+
+/* Bounded wait for the ring/queue locks (Jim's P2 nit): never wait forever. On
+ * timeout the frame/packet is dropped and the late counter is bumped. */
+#define OPUS_LOCK_TIMEOUT_MS 50
 
 /* Max compressed Opus packet we will emit for one 20 ms stereo frame. libopus
  * recommends up to ~4000 bytes; 1500 comfortably covers 128 kbps VBR and fits a
@@ -28,7 +33,13 @@ struct opus_task_ctx {
 static bool take_frame(struct opus_task_ctx *ctx, int32_t *frame)
 {
     bool have = false;
-    if (ctx->cfg.ring_lock) xSemaphoreTake(ctx->cfg.ring_lock, portMAX_DELAY);
+    if (ctx->cfg.ring_lock) {
+        if (xSemaphoreTake(ctx->cfg.ring_lock,
+                           pdMS_TO_TICKS(OPUS_LOCK_TIMEOUT_MS)) != pdTRUE) {
+            if (ctx->cfg.late_counter) (*ctx->cfg.late_counter)++;
+            return false; /* lock contended; treat as underrun, retry later */
+        }
+    }
     if (pcm_ring_count(ctx->cfg.ring) >= OPUS_FRAME_SAMPLES) {
         size_t got = pcm_ring_read(ctx->cfg.ring, frame, OPUS_FRAME_SAMPLES);
         have = (got == OPUS_FRAME_SAMPLES);
@@ -44,8 +55,13 @@ static void opus_task(void *arg)
     static opus_int16  pcm16[OPUS_FRAME_SAMPLES];
     static uint8_t     packet[OPUS_MAX_PACKET];
 
+    /* Watchdog-subscribe this critical loop (spec Section 14). */
+    esp_task_wdt_add(NULL);
+
     ESP_LOGI(TAG, "opus task started");
     while (ctx->running) {
+        esp_task_wdt_reset();
+
         if (!take_frame(ctx, frame)) {
             /* Not enough audio yet; wait ~ half a frame and retry. Bounded wait,
              * never blocks forever (spec Section 14). */
@@ -71,11 +87,19 @@ static void opus_task(void *arg)
             continue;
         }
 
-        if (ctx->cfg.queue_lock) xSemaphoreTake(ctx->cfg.queue_lock, portMAX_DELAY);
+        if (ctx->cfg.queue_lock) {
+            if (xSemaphoreTake(ctx->cfg.queue_lock,
+                               pdMS_TO_TICKS(OPUS_LOCK_TIMEOUT_MS)) != pdTRUE) {
+                if (ctx->cfg.late_counter) (*ctx->cfg.late_counter)++;
+                ESP_LOGW(TAG, "queue lock timeout; dropping encoded packet");
+                continue; /* drop rather than block the encoder */
+            }
+        }
         eq_push(ctx->cfg.queue, packet, (size_t)n);
         if (ctx->cfg.queue_lock) xSemaphoreGive(ctx->cfg.queue_lock);
     }
 
+    esp_task_wdt_delete(NULL);
     ESP_LOGI(TAG, "opus task exiting");
     ctx->task = NULL;
     vTaskDelete(NULL);

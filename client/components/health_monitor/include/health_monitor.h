@@ -30,6 +30,7 @@ typedef struct {
     uint32_t      free_heap;
     uint32_t      min_free_heap;
     uint32_t      free_psram;
+    int8_t        wifi_rssi;   /* dBm of the associated AP; 0 when not connected */
     audio_stats_t audio;
 } health_report_t;
 

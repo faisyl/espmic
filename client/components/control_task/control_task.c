@@ -13,8 +13,10 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_task_wdt.h"
 #include "esp_log.h"
 #include "esp_tls.h"
+#include "nvs.h"
 #include "cJSON.h"
 
 #include "control_frame.h"
@@ -53,6 +55,44 @@ static void set_sock_rcvtimeo(int fd, int ms)
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 }
 
+/*
+ * Optional certificate / CA pinning for hardened deployments (Jim's P2 nit,
+ * spec Section 15). LAN mode (no CA, skip_common_name) remains the documented
+ * default. Operators enable pinning by storing a PEM CA bundle under NVS key
+ * "server_ca" (NUL-terminated PEM) in the config namespace, and optionally an
+ * expected server CN/SAN under "server_cn". Loaded once, lazily.
+ */
+static unsigned char s_ca_buf[3072];
+static size_t        s_ca_len;
+static char          s_server_cn[128];
+static bool          s_pin_loaded;
+
+static void load_pinning_from_nvs(void)
+{
+    if (s_pin_loaded) return;
+    s_pin_loaded = true;
+
+    nvs_handle_t h;
+    if (nvs_open(NVS_CONFIG_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return;
+
+    size_t len = sizeof(s_ca_buf);
+    if (nvs_get_blob(h, "server_ca", s_ca_buf, &len) == ESP_OK && len > 0) {
+        /* esp-tls wants cacert_bytes to include the terminating NUL for PEM. */
+        if (len < sizeof(s_ca_buf) && s_ca_buf[len - 1] != '\0') {
+            s_ca_buf[len] = '\0';
+            len += 1;
+        }
+        s_ca_len = len;
+        ESP_LOGI(TAG, "loaded %u-byte server CA from NVS (pinned TLS)",
+                 (unsigned)len);
+    }
+    size_t cnlen = sizeof(s_server_cn);
+    if (nvs_get_str(h, "server_cn", s_server_cn, &cnlen) != ESP_OK) {
+        s_server_cn[0] = '\0';
+    }
+    nvs_close(h);
+}
+
 static esp_err_t conn_open(conn_t *c)
 {
     memset(c, 0, sizeof(*c));
@@ -60,12 +100,33 @@ static esp_err_t conn_open(conn_t *c)
 
     if (g.cfg.tls_enabled) {
         esp_tls_cfg_t tcfg = { 0 };
+
+        /* Resolve the effective CA: an explicit PEM from the caller wins;
+         * otherwise an NVS-provisioned CA enables the hardened (pinned) path;
+         * otherwise LAN mode with no verification (documented default). */
+        load_pinning_from_nvs();
+        const unsigned char *ca = NULL;
+        size_t ca_len = 0;
         if (g.cfg.server_ca_pem && g.cfg.server_ca_pem_len) {
-            tcfg.cacert_buf = (const unsigned char *)g.cfg.server_ca_pem;
-            tcfg.cacert_bytes = g.cfg.server_ca_pem_len;
+            ca = (const unsigned char *)g.cfg.server_ca_pem;
+            ca_len = g.cfg.server_ca_pem_len;
+        } else if (s_ca_len) {
+            ca = s_ca_buf;
+            ca_len = s_ca_len;
+        }
+
+        if (ca) {
+            tcfg.cacert_buf = ca;
+            tcfg.cacert_bytes = (unsigned int)ca_len;
+            /* Verify the chain; pin the expected CN/SAN when configured. */
+            if (s_server_cn[0]) tcfg.common_name = s_server_cn;
+            ESP_LOGI(TAG, "TLS: CA verification on%s",
+                     s_server_cn[0] ? " + CN pinning" : "");
         } else {
-            /* LAN mode: no CA verification. P3 TODO: pin/verify (spec Sec 15). */
+            /* LAN mode: no CA verification (acceptable only on a controlled LAN,
+             * spec Section 15). Provision an NVS "server_ca" to harden. */
             tcfg.skip_common_name = true;
+            ESP_LOGW(TAG, "TLS: no CA configured — LAN mode (unverified)");
         }
         tcfg.timeout_ms = 10000;
 
@@ -244,12 +305,26 @@ static void add_stats_block(cJSON *parent)
     cJSON_AddNumberToObject(st, "free_heap", h.free_heap);
     cJSON_AddNumberToObject(st, "min_free_heap", h.min_free_heap);
     cJSON_AddNumberToObject(st, "free_psram", h.free_psram);
+    cJSON_AddNumberToObject(st, "wifi_rssi", h.wifi_rssi);
+    /* PCM ring (spec Section 6). */
     cJSON_AddNumberToObject(st, "pcm_overflow", (double)h.audio.pcm_overflow);
+    cJSON_AddNumberToObject(st, "pcm_written", (double)h.audio.pcm_written);
+    cJSON_AddNumberToObject(st, "pcm_read", (double)h.audio.pcm_read);
     cJSON_AddNumberToObject(st, "pcm_high_water", h.audio.pcm_high_water);
+    /* Guard the "no non-empty observation yet" sentinel (Jim's P1 nit #3): the
+     * ring reports low_water == (size_t)-1 until first observed; report 0. */
+    cJSON_AddNumberToObject(st, "pcm_low_water",
+                            h.audio.pcm_low_water == (size_t)-1
+                                ? 0 : h.audio.pcm_low_water);
+    /* Encoded queue. */
     cJSON_AddNumberToObject(st, "encoded_drops", (double)h.audio.enc_drops);
+    cJSON_AddNumberToObject(st, "encoded_rejects", (double)h.audio.enc_rejects);
+    cJSON_AddNumberToObject(st, "encoded_pushed", (double)h.audio.enc_pushed);
+    cJSON_AddNumberToObject(st, "encoded_popped", (double)h.audio.enc_popped);
     cJSON_AddNumberToObject(st, "encoded_high_water", h.audio.enc_high_water);
     cJSON_AddNumberToObject(st, "encoder_late", (double)h.audio.encoder_late);
     cJSON_AddNumberToObject(st, "capture_late", (double)h.audio.capture_late);
+    /* RTP send. */
     cJSON_AddNumberToObject(st, "rtp_packets_sent", (double)h.audio.rtp_packets_sent);
     cJSON_AddNumberToObject(st, "rtp_bytes_sent", (double)h.audio.rtp_bytes_sent);
     cJSON_AddNumberToObject(st, "rtp_send_errors", (double)h.audio.rtp_send_errors);
@@ -427,10 +502,17 @@ static void run_session(void)
     uint8_t rxbuf[1024];
     TickType_t last_rx = xTaskGetTickCount();
 
+    /* Watchdog-subscribe only for the connected phase (spec Section 14). The
+     * blocking connect (conn_open) happens outside this function so its up-to
+     * 10 s TLS handshake is not watched; here every read returns within
+     * READ_TIMEOUT_MS, comfortably under the WDT period. */
+    esp_task_wdt_add(NULL);
+
     cp_decoder_init(&g.dec);
     send_hello();
 
     while (g.running) {
+        esp_task_wdt_reset();
         int r = conn_read_some(&g.conn, rxbuf, sizeof(rxbuf));
         if (r < 0) {
             ESP_LOGW(TAG, "read error / peer closed");
@@ -453,6 +535,8 @@ static void run_session(void)
             break;
         }
     }
+
+    esp_task_wdt_delete(NULL);
 }
 
 static void control_task_fn(void *arg)

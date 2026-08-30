@@ -9,6 +9,7 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 
 #include "wifi_provisioning/manager.h"
@@ -16,8 +17,13 @@
 
 static const char *TAG = "wifi_mgr";
 
-/* Bounded auto-reconnect backoff bookkeeping. */
-#define WIFI_RECONNECT_DELAY_MS 2000
+/*
+ * Bounded auto-reconnect backoff (spec Section 14). The reconnect is scheduled
+ * on a one-shot esp_timer so it runs OFF the Wi-Fi event-loop task — the event
+ * handler must never block/sleep (Jim's P2 nit). Exponential 1 s -> 16 s.
+ */
+#define WIFI_RECONNECT_MIN_MS 1000
+#define WIFI_RECONNECT_MAX_MS 16000
 
 static struct {
     bool                    inited;
@@ -25,7 +31,31 @@ static struct {
     esp_netif_t            *sta_netif;
     volatile bool           connected;
     volatile bool           provisioning;
+    esp_timer_handle_t      reconnect_timer;
+    uint32_t                backoff_ms;
 } g;
+
+/* One-shot timer callback (esp_timer task context, not the Wi-Fi event task). */
+static void reconnect_cb(void *arg)
+{
+    (void)arg;
+    if (g.connected) return; /* raced with a successful reconnect */
+    ESP_LOGI(TAG, "reconnect attempt (backoff was %u ms)",
+             (unsigned)g.backoff_ms);
+    esp_wifi_connect();
+}
+
+/* Arm the reconnect timer with the current backoff, then grow it (capped). */
+static void schedule_reconnect(void)
+{
+    if (!g.reconnect_timer) { esp_wifi_connect(); return; }
+    esp_timer_stop(g.reconnect_timer); /* ignore ESP_ERR_INVALID_STATE if idle */
+    esp_timer_start_once(g.reconnect_timer,
+                         (uint64_t)g.backoff_ms * 1000ull);
+    g.backoff_ms = (g.backoff_ms < WIFI_RECONNECT_MAX_MS)
+                       ? (g.backoff_ms * 2) : WIFI_RECONNECT_MAX_MS;
+    if (g.backoff_ms > WIFI_RECONNECT_MAX_MS) g.backoff_ms = WIFI_RECONNECT_MAX_MS;
+}
 
 static void notify_got_ip(uint32_t ip)
 {
@@ -71,9 +101,9 @@ static void event_handler(void *arg, esp_event_base_t base,
         case WIFI_EVENT_STA_DISCONNECTED:
             g.connected = false;
             notify_disc();
-            /* Auto-reconnect (spec Section 14). */
-            vTaskDelay(pdMS_TO_TICKS(WIFI_RECONNECT_DELAY_MS));
-            esp_wifi_connect();
+            /* Auto-reconnect (spec Section 14) scheduled off the event-loop
+             * task via the backoff timer — never sleep here (Jim's P2 nit). */
+            schedule_reconnect();
             break;
         default:
             break;
@@ -84,6 +114,8 @@ static void event_handler(void *arg, esp_event_base_t base,
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *evt = (ip_event_got_ip_t *)data;
         g.connected = true;
+        g.backoff_ms = WIFI_RECONNECT_MIN_MS; /* reset backoff on success */
+        if (g.reconnect_timer) esp_timer_stop(g.reconnect_timer);
         ESP_LOGI(TAG, "got ip: " IPSTR, IP2STR(&evt->ip_info.ip));
         notify_got_ip(evt->ip_info.ip.addr);
     }
@@ -94,6 +126,13 @@ esp_err_t wifi_manager_init(const wifi_manager_config_t *cfg)
     if (!cfg) return ESP_ERR_INVALID_ARG;
     if (g.inited) return ESP_OK;
     g.cfg = *cfg;
+    g.backoff_ms = WIFI_RECONNECT_MIN_MS;
+
+    const esp_timer_create_args_t targs = {
+        .callback = reconnect_cb,
+        .name = "wifi_reconn",
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&targs, &g.reconnect_timer));
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
