@@ -8,12 +8,12 @@ package stream
 type State string
 
 const (
-	StateCreated         State = "CREATED"
+	StateCreated          State = "CREATED"
 	StateWaitingForDevice State = "WAITING_FOR_DEVICE"
-	StateStarting        State = "STARTING"
-	StateRTPWait         State = "RTP_WAIT"
-	StateActive          State = "ACTIVE"
-	StateStopping        State = "STOPPING"
-	StateComplete        State = "COMPLETE"
-	StateFailed          State = "FAILED"
+	StateStarting         State = "STARTING"
+	StateRTPWait          State = "RTP_WAIT"
+	StateActive           State = "ACTIVE"
+	StateStopping         State = "STOPPING"
+	StateComplete         State = "COMPLETE"
+	StateFailed           State = "FAILED"
 )

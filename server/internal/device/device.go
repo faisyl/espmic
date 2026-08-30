@@ -7,9 +7,9 @@ package device
 
 // Device is the persisted record of a client (spec §6).
 type Device struct {
-	DeviceID   string
-	DisplayName string
-	Firmware   string
+	DeviceID     string
+	DisplayName  string
+	Firmware     string
 	Capabilities []string
-	Status     string
+	Status       string
 }

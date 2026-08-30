@@ -28,11 +28,11 @@ type Config struct {
 // Load builds a Config from defaults overridden by environment variables.
 func Load() *Config {
 	return &Config{
-		HTTPAddr:       envStr("ESPMIC_HTTP_ADDR", ":8080"),
-		ControlAddr:    envStr("ESPMIC_CONTROL_ADDR", ":9000"),
-		TLSCertFile:    envStr("ESPMIC_TLS_CERT", ""),
-		TLSKeyFile:     envStr("ESPMIC_TLS_KEY", ""),
-		JitterTargetMS: envInt("ESPMIC_JITTER_TARGET_MS", 60),
+		HTTPAddr:        envStr("ESPMIC_HTTP_ADDR", ":8080"),
+		ControlAddr:     envStr("ESPMIC_CONTROL_ADDR", ":9000"),
+		TLSCertFile:     envStr("ESPMIC_TLS_CERT", ""),
+		TLSKeyFile:      envStr("ESPMIC_TLS_KEY", ""),
+		JitterTargetMS:  envInt("ESPMIC_JITTER_TARGET_MS", 60),
 		RTPWaitTimeoutS: envInt("ESPMIC_RTP_WAIT_TIMEOUT_S", 5),
 	}
 }
