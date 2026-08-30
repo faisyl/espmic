@@ -109,7 +109,10 @@ network can never starve the microphone (spec §4/§6).
   cert/CA-pinning path: `load_pinning_from_nvs()` reads a PEM CA bundle (NVS key
   `server_ca`) and an optional expected CN/SAN (`server_cn`); when present the
   chain is verified (and CN pinned). LAN mode (no CA) remains the documented
-  default.
+  default. **Sizing:** the `server_ca` PEM buffer (`s_ca_buf`) is capped at 3072
+  bytes — enough for a device/intermediate CA chain, not a full public root
+  store; operators pinning a large bundle must trim to the intermediate(s), or
+  raise the cap if a broader trust store is required. (Jim P3 review, obs #2.)
 - **Jim P1 #3 — `low_water == (size_t)-1` sentinel.** `pcm_low_water` is now
   carried through `audio_stats_t` and guarded in the `status` reporter
   (`add_stats_block`) — reports `0` until the first non-empty observation.
