@@ -251,6 +251,17 @@ func (r *Registry) Get(id string) (*Stream, error) {
 	return s, nil
 }
 
+// List returns all streams.
+func (r *Registry) List() []*Stream {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*Stream, 0, len(r.streams))
+	for _, s := range r.streams {
+		out = append(out, s)
+	}
+	return out
+}
+
 // Remove drops a stream from the registry.
 func (r *Registry) Remove(id string) {
 	r.mu.Lock()

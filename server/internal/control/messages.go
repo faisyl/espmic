@@ -154,15 +154,22 @@ func NewStatus(status string, fields map[string]any) *Status {
 
 func (m *Status) Kind() string { return TypeStatus }
 
-// Error reports a runtime or command error (device -> server).
+// Error reports a runtime or command error (device -> server). When
+// stream_id is set, the error correlates to an awaiting start/stop caller
+// (Jim S2 minor: fail the caller immediately rather than waiting on timeout).
 type Error struct {
-	Type    string `json:"type"`
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Type      string `json:"type"`
+	StreamID  string `json:"stream_id,omitempty"`
+	Code      int    `json:"code"`
+	Message   string `json:"message"`
 }
 
 func NewError(code int, message string) *Error {
 	return &Error{Type: TypeError, Code: code, Message: message}
+}
+
+func NewStreamError(streamID string, code int, message string) *Error {
+	return &Error{Type: TypeError, StreamID: streamID, Code: code, Message: message}
 }
 
 func (m *Error) Kind() string { return TypeError }

@@ -1,13 +1,13 @@
-// Package main is the entrypoint for the ESPMIC audio server.
+// Package main is the entrypoint for the ESPMIC audio server (spec §3).
 //
-// It wires the HTTP API (spec §15) onto a minimal net/http server with
-// graceful shutdown on SIGINT/SIGTERM. Real module wiring (control
-// sessions, RTP ingest, device/stream registries) lands in S1-S3.
+// It loads config, opens persistence, builds the Server (which ties together
+// registries, control sessions, RTP receiver, decoder, PCM bus, recorder and
+// live output), registers the HTTP API + metrics, and runs until SIGINT/SIGTERM
+// triggers a graceful shutdown.
 package main
 
 import (
 	"context"
-	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -17,25 +17,37 @@ import (
 
 	"espmic/server/internal/api"
 	"espmic/server/internal/config"
+	"espmic/server/internal/server"
 )
 
 func main() {
 	cfg := config.Load()
 
-	mux := http.NewServeMux()
-	api.RegisterRoutes(mux, cfg)
+	srv, err := server.New(cfg)
+	if err != nil {
+		log.Fatalf("server: %v", err)
+	}
+	defer srv.Close()
 
-	srv := &http.Server{
-		Addr:         cfg.HTTPAddr,
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux, cfg, srv)
+
+	httpServer := &http.Server{
+		Addr:    cfg.HTTPAddr,
+		Handler: mux,
 	}
 
 	go func() {
-		log.Printf("server listening on %s", cfg.HTTPAddr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("http server: %v", err)
+		log.Printf("HTTP API listening on %s", cfg.HTTPAddr)
+		if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
+			log.Fatalf("http: %v", err)
+		}
+	}()
+
+	// Control listener + stream lifecycle is owned by the server.
+	go func() {
+		if err := srv.Start(); err != nil {
+			log.Printf("server: %v", err)
 		}
 	}()
 
@@ -45,8 +57,7 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("shutdown: %v", err)
-	}
+	_ = httpServer.Shutdown(shutdownCtx)
+	srv.Close()
 	log.Print("server stopped")
 }

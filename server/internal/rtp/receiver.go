@@ -45,9 +45,10 @@ func NewReceiver(m *metrics.Metrics) *Receiver {
 }
 
 // Bind allocates a UDP port for streamID and starts a read goroutine
-// (spec §9: one UDP port per active stream). ssrc/pt are the expected values
+// (spec §9: one UDP port per active stream). ssrc is a uint32 (the RTP SSRC
+// field width); pt is uint8 (the RTP payload type field width). Both are
 // validated on every packet (spec §19).
-func (r *Receiver) Bind(ctx context.Context, streamID string, ssrc, pt uint16) (uint16, error) {
+func (r *Receiver) Bind(ctx context.Context, streamID string, ssrc uint32, pt uint8) (uint16, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.streams[streamID]; ok {
@@ -61,11 +62,11 @@ func (r *Receiver) Bind(ctx context.Context, streamID string, ssrc, pt uint16) (
 	ctx, cancel := context.WithCancel(ctx)
 	b := &streamBinding{
 		streamID: streamID,
-		ssrc:     uint32(ssrc),
-		pt:       pt,
+		ssrc:     ssrc,
+		pt:       uint16(pt),
 		port:     port,
 		pc:       pc,
-		jb:       New(60 * time.Millisecond),
+		jb:       New(60*time.Millisecond),
 		cancel:   cancel,
 	}
 	r.streams[streamID] = b
@@ -95,6 +96,13 @@ func (r *Receiver) CloseStream(streamID string) {
 	}
 	b.cancel()
 	_ = b.pc.Close()
+}
+
+// streamCount returns the number of bound streams (for tests/leak checks).
+func (r *Receiver) streamCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.streams)
 }
 
 // readLoop reads packets, validates SSRC/PT, and pushes into the jitter

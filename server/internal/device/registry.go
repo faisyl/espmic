@@ -78,7 +78,16 @@ func (r *Registry) Authenticate(id string, credHash []byte) (Device, error) {
 	return d, nil
 }
 
-// SetOnline marks a device online with the current time (last_seen, spec §6).
+// List returns all registered devices.
+func (r *Registry) List() []Device {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Device, 0, len(r.devices))
+	for _, d := range r.devices {
+		out = append(out, d)
+	}
+	return out
+}
 func (r *Registry) SetOnline(id string, t time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

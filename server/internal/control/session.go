@@ -32,6 +32,7 @@ type Session struct {
 
 	outboundMu sync.Mutex
 	buf        *FrameReader
+	readBuf    [1024]byte // reusable read buffer (Jim S2 minor: avoid per-call alloc)
 	deviceID   string
 	registered bool
 }
@@ -143,13 +144,12 @@ func (s *Session) readLoop(ctx context.Context, errCh chan<- error) {
 
 // readFrame uses the streaming reader with bounded reads (spec §7).
 func (s *Session) readFrame() ([]byte, error) {
-	tmp := make([]byte, 1024)
 	for {
-		n, err := s.conn.Read(tmp)
+		n, err := s.conn.Read(s.readBuf[:])
 		if err != nil {
 			return nil, err
 		}
-		frames, needMore, ferr := s.buf.Push(tmp[:n])
+		frames, needMore, ferr := s.buf.Push(s.readBuf[:n])
 		if ferr != nil {
 			return nil, ferr
 		}

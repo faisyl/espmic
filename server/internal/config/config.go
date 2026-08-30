@@ -23,6 +23,9 @@ type Config struct {
 
 	// RTPWaitTimeoutS is how long after stream_started we wait for RTP (spec §17).
 	RTPWaitTimeoutS int
+
+	// DBPath is the SQLite database path (spec §20).
+	DBPath string
 }
 
 // Load builds a Config from defaults overridden by environment variables.
@@ -34,6 +37,7 @@ func Load() *Config {
 		TLSKeyFile:      envStr("ESPMIC_TLS_KEY", ""),
 		JitterTargetMS:  envInt("ESPMIC_JITTER_TARGET_MS", 60),
 		RTPWaitTimeoutS: envInt("ESPMIC_RTP_WAIT_TIMEOUT_S", 5),
+		DBPath:          envStr("ESPMIC_DB_PATH", "espmic.db"),
 	}
 }
 
