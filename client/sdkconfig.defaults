@@ -4,6 +4,10 @@
 # --- Target ---
 CONFIG_IDF_TARGET="esp32s3"
 
+# --- Flash size (partition table needs >2 MB; use 8 MB, a common ESP32-S3
+# --- DevKitC default) ---
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
 # --- PSRAM ---
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y

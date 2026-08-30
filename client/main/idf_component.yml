@@ -2,7 +2,7 @@
 dependencies:
   idf:
     version: ">=5.0.0"
-  espressif/esp-tls:
-    version: "*"
-  espressif/opus:
+  # esp-tls is a bundled ESP-IDF component — it is NOT a registry component
+  # and must not be declared here.
+  78/esp-opus:
     version: "*"

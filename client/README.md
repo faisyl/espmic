@@ -16,6 +16,24 @@ and maintains a TLS/TCP control connection to the server.
     make
     ./test_runner
 
+## Containerized Build & Test (Earthly — no local toolchain)
+
+Everything runs in containers via the `Earthfile` at the repo root. The only
+host requirements are Docker and the `earthly` binary. No ESP-IDF toolchain,
+cmake, or xtensa-gcc is installed on the host.
+
+    # Host unit tests (P1 portable suite) in a slim gcc container — 197 checks
+    earthly +host-test
+
+    # Full ESP-IDF firmware build inside the espressif/idf:release-v5.5
+    # container. Managed deps (78/esp-opus) are fetched by the component
+    # manager in-container. Output (bin + elf + bootloader + partition table)
+    # is exported to client/build/.
+    earthly +firmware
+
+    # Both of the above
+    earthly +all
+
 ## Project Structure
 
 - `main/`           — application entry point
