@@ -139,14 +139,14 @@ func TestMessagesRoundtrip(t *testing.T) {
 		name string
 		msg  Message
 	}{
-		{"hello", NewHello("esp32-001", "1.2.3", []string{"opus"})},
+		{"hello", NewHello("esp32-001", "secret", "1.2.3", []string{"opus"})},
 		{"hello_ack", NewHelloAck("sess-1", "esp32-001")},
 		{"ping", NewPing(5)},
 		{"pong", NewPong(5)},
 		{"start_stream", NewStartStream("uuid", 1234567, 5004)},
 		{"stream_started", NewStreamStarted("uuid")},
 		{"stop_stream", NewStopStream("uuid")},
-		{"stream_stopped", NewStreamStopped("uuid")},
+		{"stream_stopped", NewStreamStopped("uuid", nil)},
 		{"get_status", NewGetStatus()},
 		{"status", NewStatus("ok", map[string]any{"battery": 88})},
 		{"error", NewError(7, "boom")},

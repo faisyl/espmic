@@ -1,6 +1,7 @@
 package rtp
 
 import (
+	"sync"
 	"time"
 )
 
@@ -25,11 +26,18 @@ func WithLossHook(fn func(seq uint16)) Option {
 	return func(jb *JitterBuffer) { jb.onLoss = fn }
 }
 
+// withLossHookCalls caps how many per-sequence PLC hook invocations a single
+// Emit may perform for one gap, so an adversarial far-ahead packet can't make
+// one Emit walk the whole sequence range. The lost counter still accounts for
+// the full gap arithmetically.
+const maxLossHookCalls = 1024
+
 // JitterBuffer reorders RTP packets by sequence number and provides a bounded
 // playout delay (spec §11). Packets are emitted in sequence order once their
 // playout deadline has elapsed; a missing packet that has exceeded its
 // deadline is declared lost and its PLC hook invoked.
 type JitterBuffer struct {
+	mu       sync.RWMutex
 	target   time.Duration
 	onLoss   func(seq uint16)
 	buf      map[uint16]buffered
@@ -62,6 +70,9 @@ func New(target time.Duration, opts ...Option) *JitterBuffer {
 // Push submits a received packet with its receipt time. It does not emit; use
 // Emit to advance playback with an injected clock.
 func (jb *JitterBuffer) Push(p Packet, recv time.Time) {
+	jb.mu.Lock()
+	defer jb.mu.Unlock()
+
 	jb.stats.Received++
 	if !jb.haveSeq {
 		jb.expected = p.SequenceNumber
@@ -95,6 +106,9 @@ func (jb *JitterBuffer) Push(p Packet, recv time.Time) {
 // sequence order, declaring and reporting any intervening gaps as lost
 // (spec §11). now is injected so behaviour is deterministic in tests.
 func (jb *JitterBuffer) Emit(now time.Time) []Packet {
+	jb.mu.Lock()
+	defer jb.mu.Unlock()
+
 	var out []Packet
 	for {
 		cur := jb.expected
@@ -132,10 +146,18 @@ func (jb *JitterBuffer) Emit(now time.Time) []Packet {
 }
 
 // Statistics returns a snapshot of the current counters.
-func (jb *JitterBuffer) Statistics() Stats { return jb.stats }
+func (jb *JitterBuffer) Statistics() Stats {
+	jb.mu.RLock()
+	defer jb.mu.RUnlock()
+	return jb.stats
+}
 
 // Len reports how many packets are currently buffered awaiting playout.
-func (jb *JitterBuffer) Len() int { return len(jb.buf) }
+func (jb *JitterBuffer) Len() int {
+	jb.mu.RLock()
+	defer jb.mu.RUnlock()
+	return len(jb.buf)
+}
 
 // nextPresentDue finds the smallest sequence number present in the buffer whose
 // playout deadline has passed, revealing that intervening in-order slots are
@@ -175,12 +197,6 @@ func (jb *JitterBuffer) updateJitter(p Packet, recv time.Time) {
 	jb.prevTransit = transit
 	jb.havePrev = true
 }
-
-// withLossHookCalls caps how many per-sequence PLC hook invocations a single
-// Emit may perform for one gap, so an adversarial far-ahead packet can't make
-// one Emit walk the whole sequence range. The lost counter still accounts for
-// the full gap arithmetically.
-const maxLossHookCalls = 1024
 
 // seqBefore reports whether a precedes b in RTP sequence order using RFC 3550
 // half-range serial arithmetic (reliable within a window of < 32768). This

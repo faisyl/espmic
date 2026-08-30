@@ -29,16 +29,20 @@ type Message interface {
 	Kind() string
 }
 
-// Hello introduces a device on connection (device -> server).
+// Hello introduces a device on connection (device -> server). Credential is
+// the pre-shared secret/token the device presents; the server hashes it and
+// compares against the stored hash (spec §19). The exact auth scheme (PSK,
+// token, mTLS-derived) is pinned in S3; S2 uses a pre-shared credential.
 type Hello struct {
 	Type         string   `json:"type"`
 	DeviceID     string   `json:"device_id"`
+	Credential   string   `json:"credential,omitempty"`
 	Firmware     string   `json:"firmware,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
 }
 
-func NewHello(deviceID, firmware string, capabilities []string) *Hello {
-	return &Hello{Type: TypeHello, DeviceID: deviceID, Firmware: firmware, Capabilities: capabilities}
+func NewHello(deviceID, credential, firmware string, capabilities []string) *Hello {
+	return &Hello{Type: TypeHello, DeviceID: deviceID, Credential: credential, Firmware: firmware, Capabilities: capabilities}
 }
 
 func (m *Hello) Kind() string { return TypeHello }
@@ -117,12 +121,13 @@ func (m *StopStream) Kind() string { return TypeStopStream }
 
 // StreamStopped confirms a stream stopped, optionally with stats (device -> server).
 type StreamStopped struct {
-	Type     string `json:"type"`
-	StreamID string `json:"stream_id"`
+	Type     string         `json:"type"`
+	StreamID string         `json:"stream_id"`
+	Stats    map[string]any `json:"stats,omitempty"`
 }
 
-func NewStreamStopped(streamID string) *StreamStopped {
-	return &StreamStopped{Type: TypeStreamStopped, StreamID: streamID}
+func NewStreamStopped(streamID string, stats map[string]any) *StreamStopped {
+	return &StreamStopped{Type: TypeStreamStopped, StreamID: streamID, Stats: stats}
 }
 
 func (m *StreamStopped) Kind() string { return TypeStreamStopped }
