@@ -1,0 +1,19 @@
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+# Host test build artifacts
+test/build/
+test/*.o
+test/test_runner
+# Compiled host test binaries (one per module)
+test/test_rtp
+test/test_control_frame
+test/test_pcm_ring
+test/test_encoded_queue
+test/test_state_machine
