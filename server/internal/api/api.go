@@ -18,6 +18,13 @@ type Handlers struct {
 	srv Server
 }
 
+// serverVersion is the build-time version string (injected from cmd/server
+// via SetVersion); surfaced on /health.
+var serverVersion = "dev"
+
+// SetVersion records the build-time version for the /health endpoint.
+func SetVersion(v string) { serverVersion = v }
+
 // NewHandlers returns handlers bound to the server.
 func NewHandlers(srv Server) *Handlers { return &Handlers{srv: srv} }
 
@@ -37,7 +44,7 @@ func RegisterRoutes(mux *http.ServeMux, cfg *config.Config, srv Server) {
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": serverVersion})
 }
 
 func (h *Handlers) handleDevices(w http.ResponseWriter, _ *http.Request) {

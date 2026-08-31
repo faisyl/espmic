@@ -33,7 +33,21 @@ func TestHealth(t *testing.T) {
 		t.Fatalf("decode body: %v", err)
 	}
 	if body["status"] != "ok" {
-		t.Fatalf("status = %q, want %q", body["status"], "ok")
+		t.Fatalf("GET /health status = %q, want %q", body["status"], "ok")
+	}
+	if body["version"] != "dev" {
+		t.Fatalf("GET /health version = %q, want %q (default before SetVersion)", body["version"], "dev")
+	}
+
+	// SetVersion is reflected on /health.
+	SetVersion("v9.9.9-test")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if err := json.Unmarshal(rec2.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["version"] != "v9.9.9-test" {
+		t.Fatalf("after SetVersion, /health version = %q, want v9.9.9-test", body["version"])
 	}
 }
 

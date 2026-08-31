@@ -1,0 +1,9 @@
+.git
+dist/
+espmic.db
+*.db
+*.db-journal
+build/
+Dockerfile
+Dockerfile.release
+docker-compose.yml

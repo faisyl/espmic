@@ -20,7 +20,13 @@ import (
 	"espmic/server/internal/server"
 )
 
+// Build-time stamped values (set via -X in .goreleaser.yaml; dev defaults).
+var version = "dev"
+var commit = "none"
+var date = "unknown"
+
 func main() {
+	log.Printf("espmic-server version=%s commit=%s date=%s", version, commit, date)
 	cfg := config.Load()
 
 	srv, err := server.New(cfg)
@@ -31,6 +37,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux, cfg, srv)
+	api.SetVersion(version)
 
 	httpServer := &http.Server{
 		Addr:    cfg.HTTPAddr,
