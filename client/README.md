@@ -28,11 +28,35 @@ cmake, or xtensa-gcc is installed on the host.
     # Full ESP-IDF firmware build inside the espressif/idf:release-v5.5
     # container. Managed deps (78/esp-opus) are fetched by the component
     # manager in-container. Output (bin + elf + bootloader + partition table)
-    # is exported to client/build/.
+    # is exported to client/build-<TARGET>/.
     earthly +firmware
+
+    # Build for a different chip (default target is esp32s3)
+    earthly +firmware --TARGET=esp32
+
+    # Build the firmware for every supported target (currently esp32s3, esp32)
+    earthly +firmware-all
 
     # Both of the above
     earthly +all
+
+## Target selection & SDK configuration
+
+The firmware build is parameterized by chip target via the Earthfile `TARGET`
+ARG (default `esp32s3`). Artifacts are saved per target under
+`client/build-<TARGET>/` so targets never clobber each other.
+
+SDK configuration is split so the base `sdkconfig.defaults` stays
+target-neutral and per-target options live in `sdkconfig.defaults.<target>`
+files, which ESP-IDF auto-loads alongside the base file:
+
+- `sdkconfig.defaults`            — target-neutral options (flash size, WiFi, TLS, FreeRTOS, partition table)
+- `sdkconfig.defaults.esp32s3`    — ESP32-S3 octal PSRAM @ 80 MHz
+- `sdkconfig.defaults.esp32`      — ESP32 quad PSRAM
+
+Caveat: the firmware depends on `78/esp-opus` for Opus encoding; a new target
+builds only if that component declares support for the target. Both `esp32s3`
+and `esp32` currently compile green.
 
 ## Project Structure
 

@@ -1,0 +1,10 @@
+# ESP32-S3 network audio device — per-target SDK configuration.
+# Auto-loaded by the build system for target esp32s3 (in addition to
+# sdkconfig.defaults). Octal PSRAM + 80 MHz is S3-only.
+
+# --- Target ---
+CONFIG_IDF_TARGET="esp32s3"
+
+# --- PSRAM: octal, 80 MHz (S3 with/PUYA octal PSRAM) ---
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y

@@ -17,16 +17,28 @@ host-test:
 # Full ESP-IDF build of the client firmware inside the official espressif/idf
 # container. idf.py's component manager fetches managed deps (78/esp-opus)
 # from the registry in-container. This is the first real compile of P2/P3.
-# The whole client/build dir (bins, elf, bootloader, partition table) is saved
-# as the `firmware` artifact target.
+# Parametrized by chip target: `earthly +firmware --TARGET=esp32` (or any
+# ESP-IDF target string) builds that target. The whole client/build-$TARGET dir
+# (bins, elf, bootloader, partition table) is saved as the `firmware` artifact
+# so targets never clobber each other's artifacts.
 firmware:
+    ARG TARGET=esp32s3
     FROM espressif/idf:release-v5.5
     WORKDIR /src
     COPY client ./client
     # export.sh needs bash (BASH_SOURCE) to locate the IDF dir; Earthly's
     # default RUN shell is /bin/sh, so run bash explicitly.
-    RUN bash -lc 'cd client && . $IDF_PATH/export.sh && idf.py set-target esp32s3 && idf.py build'
-    SAVE ARTIFACT client/build AS LOCAL client/build
+    # SDKCONFIG_DEFAULTS default is target-neutral sdkconfig.defaults; the
+    # build system auto-appends sdkconfig.defaults.<target> for the chosen
+    # target, so the base + per-target fragments are picked up automatically.
+    RUN bash -lc 'cd client && . $IDF_PATH/export.sh && idf.py set-target $TARGET && idf.py build && mv build build-$TARGET'
+    SAVE ARTIFACT client/build-$TARGET AS LOCAL client/build-$TARGET
+
+# ------------------------------------------------------------ firmware-all
+# Build the firmware for every supported target.
+firmware-all:
+    BUILD +firmware --TARGET=esp32s3
+    BUILD +firmware --TARGET=esp32
 
 # ----------------------------------------------------------------------- all
 # Build everything: host tests + full firmware.
