@@ -1,0 +1,43 @@
+# ESPMIC audio server compose stack.
+#
+# Runs a single `server` service from the local image (built with
+# `docker compose build`) or from the published image. See README.md.
+services:
+  server:
+    image: ghcr.io/faisyl/espmic-server:latest
+    build: .
+    restart: unless-stopped
+    environment:
+      # All tunables (source of truth: internal/config/config.go):
+      ESPMIC_HTTP_ADDR: ":8080"
+      ESPMIC_CONTROL_ADDR: ":9000"
+      # TLS for the control connection — set paths to cert/key mounted on the
+      # /certs volume (or a bind mount) to enable TLS; empty means plain TCP.
+      ESPMIC_TLS_CERT: ""
+      ESPMIC_TLS_KEY: ""
+      ESPMIC_DB_PATH: /data/espmic.db
+      ESPMIC_JITTER_TARGET_MS: "60"
+      ESPMIC_RTP_WAIT_TIMEOUT_S: "5"
+    ports:
+      - "8080:8080"   # HTTP management API
+      - "9000:9000"   # control TLS/TCP
+    volumes:
+      - espmic-data:/data
+
+# ---- RTP UDP ingest ----------------------------------------------------
+# The server opens a fresh UDP socket per managed stream (spec §17), i.e.
+# dynamic port numbers — it cannot be exposed with static `ports:` mappings.
+# Use one of:
+#   a) host networking (simplest; the server binds UDP directly on the host):
+#        network_mode: host
+#        + remove the `ports:` block above
+#   b) a mapped UDP range (requires the range to be fixed in the server /
+#      NAT/firewall rules on the host):
+#        ports:
+#          - "9000-9100:9000-9100/udp"
+# Default is `ports:` TCP-only (management API + control) — RTP ingest is
+# disabled unless one of the options above is enabled.
+
+volumes:
+  espmic-data:
+    name: espmic-data   # holds the SQLite DB (espmic.db) + recordings/

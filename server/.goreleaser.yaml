@@ -1,0 +1,61 @@
+# GoReleaser configuration for the ESPMIC audio server (v2 schema).
+# The stack is pure-Go (no cgo), so binaries are static for each platform.
+version: 2
+
+project_name: espmic-server
+
+builds:
+  - id: server
+    main: ./cmd/server
+    binary: espmic-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: faisyl
+    name: espmic
+  draft: true
+
+# Docker image section. buildx builds + pushes a multi-arch manifest in the
+# publish phase; `--snapshot` builds one loadable image per platform instead.
+# For a local layout we build only linux/amd64 (cross-arch images need a
+# binfmt/CI runner). The image reuses the already-built, prebuilt binary —
+# see Dockerfile.release.
+dockers_v2:
+  - id: server
+    dockerfile: Dockerfile.release
+    images:
+      - ghcr.io/faisyl/espmic-server
+    tags:
+      - "{{.Version}}"
+      - latest
+    platforms:
+      - linux/amd64
+    annotations:
+      "org.opencontainers.image.title": "espmic-server"
+      "org.opencontainers.image.description": "ESPMIC audio server (RTP/Opus ingest, PCM distribution, recording)"
+      "org.opencontainers.image.source": "{{.GitURL}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
+      "org.opencontainers.image.created": "{{.Date}}"
