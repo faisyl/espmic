@@ -1,0 +1,10 @@
+# ESP32 network audio device — per-target SDK configuration.
+# Auto-loaded by the build system for target esp32 (in addition to
+# sdkconfig.defaults). Original ESP32 uses quad-PSRAM (SPI), no octal.
+
+# --- Target ---
+CONFIG_IDF_TARGET="esp32"
+
+# --- PSRAM: quad mode, 80 MHz (valid when flash runs at 80 MHz, the default) ---
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_SPEED_80M=y
