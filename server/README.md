@@ -82,6 +82,41 @@ Pure-Go, no cgo:
 - `github.com/gorilla/websocket` – live distribution (spec §14)
 - `github.com/mewkiz/flac` – FLAC encoder (spec §13)
 
+## Release (GoReleaser)
+
+.config in `.goreleaser.yaml` (v2 schema): cross-compiles a static
+(`CGO_ENABLED=0`) `espmic-server` for linux/amd64 + linux/arm64, produces
+archives + checksums, and builds a `ghcr.io/faisyl/espmic-server` image.
+
+```sh
+go install github.com/goreleaser/goreleaser/v2@latest
+goreleaser check             # validate .goreleaser.yaml
+goreleaser release --snapshot --clean   # local build, outputs to dist/
+```
+
+## Docker / compose
+
+The `Dockerfile` is multi-stage: `golang:1.26` builder → slim Alpine runtime,
+non-root user, static binary, listens on `8080` (HTTP API) and `9000` (control
+TLS). The SQLite DB lives at `$ESPMIC_DB_PATH` (`/data/espmic.db` in the
+image) and recordings under `/data/recordings/`; `/data` is a volume.
+
+```sh
+docker compose up --build        # from this directory
+curl localhost:8080/health       # -> {"status":"ok"}
+```
+
+**RTP UDP ingest** uses one dynamic UDP port per managed stream (spec §17), so
+it cannot be reached through the TCP `ports:` mapping above. The compose file
+documents the two options — host networking or a mapped UDP range — with a
+commented `network_mode: host` block. Until one is enabled, the HTTP API + TLS
+control plane work but RTP receive does not.
+
+All documented env vars (`ESPMIC_HTTP_ADDR`, `ESPMIC_CONTROL_ADDR`,
+`ESPMIC_TLS_CERT`, `ESPMIC_TLS_KEY`, `ESPMIC_DB_PATH`,
+`ESPMIC_JITTER_TARGET_MS`, `ESPMIC_RTP_WAIT_TIMEOUT_S`) are wired in
+`docker-compose.yml`; source of truth is `internal/config/config.go`.
+
 ## Opus fidelity validation (spec §21 #1/#2)
 
 `libopus`/`ffmpeg` are NOT on the host. To validate pion/opus fidelity

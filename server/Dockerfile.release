@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+# Runtime image used by GoReleaser (see `dockers_v2` in .goreleaser.yaml).
+#
+# GoReleaser's docker build context contains only the already-built binary
+# (per --platform), NOT the source tree — so this image just installs that
+# binary into a slim Alpine runtime. The multi-stage `Dockerfile` in this
+# directory is for `docker compose build` / direct source builds.
+FROM alpine:3.20
+ARG TARGETPLATFORM
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S espmic && adduser -S -G espmic espmic
+
+WORKDIR /app
+COPY $TARGETPLATFORM/espmic-server /app/espmic-server
+
+# Runtime data: SQLite DB (ESPMIC_DB_PATH) + recordings.
+RUN mkdir -p /data/recordings && chown -R espmic:espmic /data
+
+USER espmic
+
+# HTTP management API (spec §15)
+EXPOSE 8080
+# control TLS/TCP (spec §7)
+EXPOSE 9000
+
+VOLUME ["/data"]
+
+ENV ESPMIC_HTTP_ADDR=":8080" \
+    ESPMIC_CONTROL_ADDR=":9000" \
+    ESPMIC_DB_PATH="/data/espmic.db"
+
+ENTRYPOINT ["/app/espmic-server"]
