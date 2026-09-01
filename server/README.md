@@ -50,12 +50,24 @@ go test -race ./...
 ```sh
 go run ./cmd/server
 # defaults: HTTP :8080, control :9000; override via env vars
-curl localhost:8080/health          # -> {"status":"ok"}
+curl localhost:8080/health          # -> {"status":"ok","version":"dev"}
 curl localhost:8080/api/metrics     # -> {statistics snapshot}
 curl localhost:8080/api/devices     # -> [device list]
 ```
 
 Sends SIGTERM/SIGINT for graceful shutdown.
+
+## Version Stamping
+
+Build metadata (`version`, `commit`, `date`) is stamped at build-time using Go linker flags (`-X main.version=... -X main.commit=... -X main.date=...`).
+At startup, `espmic-server` logs these build variables, and the `GET /health` endpoint surfaces the version string:
+
+```json
+{
+  "status": "ok",
+  "version": "v0.4.6"
+}
+```
 
 ## API (spec §15)
 
@@ -84,26 +96,27 @@ Pure-Go, no cgo:
 
 ## Release (GoReleaser)
 
-.config in `.goreleaser.yaml` (v2 schema): cross-compiles a static
-(`CGO_ENABLED=0`) `espmic-server` for linux/amd64 + linux/arm64, produces
-archives + checksums, and builds a `ghcr.io/faisyl/espmic-server` image.
+Configuration in `.goreleaser.yaml` (v2 schema): cross-compiles a static
+(`CGO_ENABLED=0`) `espmic-server` binary for `linux/amd64` and `linux/arm64`.
+It stamps `main.version`, `main.commit`, and `main.date` via `-X` ldflags, produces
+`tar.gz` archives and `checksums.txt`, and builds the Docker image `ghcr.io/faisyl/espmic-server`
+via `Dockerfile.release` (re-using the prebuilt binary).
 
 ```sh
 go install github.com/goreleaser/goreleaser/v2@latest
 goreleaser check             # validate .goreleaser.yaml
-goreleaser release --snapshot --clean   # local build, outputs to dist/
+goreleaser release --snapshot --clean   # local snapshot build, outputs to dist/
 ```
 
 ## Docker / compose
 
-The `Dockerfile` is multi-stage: `golang:1.26` builder → slim Alpine runtime,
-non-root user, static binary, listens on `8080` (HTTP API) and `9000` (control
-TLS). The SQLite DB lives at `$ESPMIC_DB_PATH` (`/data/espmic.db` in the
-image) and recordings under `/data/recordings/`; `/data` is a volume.
+The standalone `Dockerfile` provides a multi-stage build: `golang:1.26` builder → slim `alpine:3.20` runtime with non-root user `espmic`, static binary (`CGO_ENABLED=0`), exposing ports `8080` (HTTP API) and `9000` (control TLS/TCP). The SQLite DB lives at `$ESPMIC_DB_PATH` (`/data/espmic.db` in the image) and recordings under `/data/recordings/`; `/data` is mounted as a volume.
+
+`Dockerfile.release` is used by GoReleaser to package the prebuilt static binary into the same minimal Alpine runtime image.
 
 ```sh
 docker compose up --build        # from this directory
-curl localhost:8080/health       # -> {"status":"ok"}
+curl localhost:8080/health       # -> {"status":"ok","version":"dev"}
 ```
 
 **RTP UDP ingest** uses one dynamic UDP port per managed stream (spec §17), so

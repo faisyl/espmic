@@ -25,6 +25,9 @@ cmake, or xtensa-gcc is installed on the host.
     # Host unit tests (P1 portable suite) in a slim gcc container — 197 checks
     earthly +host-test
 
+    # Pre-fetch managed components (78/esp-opus) into managed_components/
+    earthly +deps
+
     # Full ESP-IDF firmware build inside the espressif/idf:release-v5.5
     # container. Managed deps (78/esp-opus) are fetched by the component
     # manager in-container. Output (bin + elf + bootloader + partition table)
@@ -39,6 +42,10 @@ cmake, or xtensa-gcc is installed on the host.
 
     # Both of the above
     earthly +all
+
+Warm rebuilds are accelerated using `.earthlyignore` (prevents local build
+artifacts from busting the build context cache) and persistent `CACHE` mounts for
+`ccache` (`/root/.cache/ccache`) and component-manager downloads (`/root/.cache/Espressif`).
 
 ## Target selection & SDK configuration
 
@@ -57,6 +64,33 @@ files, which ESP-IDF auto-loads alongside the base file:
 Caveat: the firmware depends on `78/esp-opus` for Opus encoding; a new target
 builds only if that component declares support for the target. Both `esp32s3`
 and `esp32` currently compile green.
+
+## Runtime Configuration & I2S Pin Mapping
+
+Device settings live in persistent NVS storage (`nvs_config` component). Hardware pin defaults are:
+- `i2s_bclk`: GPIO 5 (bit clock)
+- `i2s_ws`:   GPIO 6 (word select / LR clock)
+- `i2s_din`:  GPIO 4 (data in)
+
+I2S pins can be updated dynamically at runtime via the control channel using the `set_config` message:
+
+```json
+{
+  "type": "set_config",
+  "request_id": "req-101",
+  "default_bitrate": 128000,
+  "server_host": "audio.example.local",
+  "i2s_bclk": 5,
+  "i2s_ws": 6,
+  "i2s_din": 4
+}
+```
+
+Validation & Semantics:
+- `i2s_bclk`, `i2s_ws`, and `i2s_din` accept integer values in the valid GPIO range `0..47`.
+- Provided pins are validated as a group; if any specified pin is outside `0..47`, the entire update is rejected with an `invalid_config` error.
+- Valid pin settings persist immediately to NVS keys `i2s_bclk`, `i2s_ws`, and `i2s_din`.
+- **Apply-on-restart:** Because the I2S peripheral channel is initialized once at startup (`audio_manager_init`), updated pin configurations persist to NVS immediately and take effect on the next boot or stream (re)start.
 
 ## Project Structure
 
