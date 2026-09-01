@@ -138,3 +138,15 @@ esp_err_t nvs_config_set_u32(const char *key, uint32_t value)
     nvs_close(h);
     return err;
 }
+
+esp_err_t nvs_config_set_i32(const char *key, int32_t value)
+{
+    if (!key) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_CONFIG_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_i32(h, key, value);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}

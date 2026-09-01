@@ -66,6 +66,7 @@ esp_err_t nvs_config_erase(void);
 /* Convenience single-key setters that load/modify/commit atomically. */
 esp_err_t nvs_config_set_str(const char *key, const char *value);
 esp_err_t nvs_config_set_u32(const char *key, uint32_t value);
+esp_err_t nvs_config_set_i32(const char *key, int32_t value);
 
 #ifdef __cplusplus
 }

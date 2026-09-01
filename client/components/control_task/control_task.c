@@ -473,6 +473,35 @@ static void handle_message(const uint8_t *payload, uint32_t len)
         const cJSON *host = cJSON_GetObjectItemCaseSensitive(root, "server_host");
         if (cJSON_IsString(host) && host->valuestring)
             nvs_config_set_str("server_host", host->valuestring);
+
+        /* I2S pin configuration (i2s_bclk, i2s_ws, i2s_din) - validated as a group.
+         * These take effect on next boot (audio_manager reads them once at init).
+         * Reject the whole request if any provided pin is out of range. */
+        const cJSON *bclk = cJSON_GetObjectItemCaseSensitive(root, "i2s_bclk");
+        const cJSON *ws   = cJSON_GetObjectItemCaseSensitive(root, "i2s_ws");
+        const cJSON *din  = cJSON_GetObjectItemCaseSensitive(root, "i2s_din");
+
+        if (cJSON_IsNumber(bclk) || cJSON_IsNumber(ws) || cJSON_IsNumber(din)) {
+            int32_t bclk_val = cJSON_IsNumber(bclk) ? (int32_t)bclk->valuedouble : -1;
+            int32_t ws_val   = cJSON_IsNumber(ws)   ? (int32_t)ws->valuedouble   : -1;
+            int32_t din_val  = cJSON_IsNumber(din)  ? (int32_t)din->valuedouble  : -1;
+
+            /* Validate each provided pin. Valid range: 0-47 (covers ESP32 & ESP32-S3).
+             * Sentinel -1 means "not provided in this request". */
+            bool ok = true;
+            if (bclk_val != -1 && (bclk_val < 0 || bclk_val > 47)) ok = false;
+            if (ws_val != -1 && (ws_val < 0 || ws_val > 47)) ok = false;
+            if (din_val != -1 && (din_val < 0 || din_val > 47)) ok = false;
+
+            if (!ok) {
+                send_error(rid, "invalid_config",
+                           "i2s_bclk/i2s_ws/i2s_din must be in range 0..47");
+            } else {
+                if (bclk_val != -1) nvs_config_set_i32("i2s_bclk", bclk_val);
+                if (ws_val != -1)   nvs_config_set_i32("i2s_ws", ws_val);
+                if (din_val != -1)  nvs_config_set_i32("i2s_din", din_val);
+            }
+        }
         send_status(rid); /* echo new state */
 
     } else if (strcmp(type, "error") == 0) {
