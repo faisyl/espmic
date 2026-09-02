@@ -136,6 +136,136 @@ earthly +flash --TARGET=esp32 --PORT=/dev/ttyUSB0
 Flash offsets match `client/partitions.csv`: bootloader at `0x0` (esp32s3) or
 `0x1000` (esp32), partition table at `0x8000`, app at `0x10000`.
 
+## Device Onboarding (after flashing)
+
+Once the firmware is flashed and powered on, the device boots through provisioning
+and connects to your server. This section walks through that first-boot flow.
+
+### 1. Boot Sequence
+
+On every boot the firmware runs (see `client/main/app_main.c`):
+
+1. **NVS init** — required for Wi-Fi credentials and persistent config.
+2. **Load config** — `nvs_config_defaults()` applies compiled defaults, then
+   `nvs_config_load()` overrides any values previously stored in NVS.
+3. **Device state machine** starts at `BOOT`.
+4. **Health monitor** starts (1 s stats snapshot) and the Task WDT is enabled.
+5. **Audio pipeline** (`audio_manager_init`) initializes I2S with the configured pins.
+6. **Wi-Fi manager** initializes and attempts to connect.
+7. **On got-IP** — the control task starts and connects to `server_host:server_port`.
+
+### 2. Wi-Fi Provisioning (first boot)
+
+On first boot (or after a credentials reset) the device has no stored Wi-Fi
+credentials, so it automatically enters **SoftAP provisioning** via the ESP-IDF
+provisioning subsystem (`wifi_prov_scheme_softap`).
+
+- The device broadcasts a SoftAP with SSID **`PROV_ESP32`** (configurable via
+  `wifi_manager_config_t.service_name`, set in `app_main.c`).
+- If a proof-of-possession string (`pop`) is configured, provisioning uses
+  **Security 1**; otherwise it uses **Security 0** (open). The default has no PoP.
+- Wi-Fi credentials are stored by the provisioning subsystem in NVS — **not** by
+  `nvs_config` (see `nvs_config.h`).
+
+**To provision the device's Wi-Fi**, use one of the standard Espressif provisioning
+methods while the device is in provisioning mode:
+
+- **Mobile app:** Espressif's "ESP SoftAP Provisioning" app — scan for the
+  `PROV_ESP32` network, select it, and enter your home Wi-Fi SSID and password
+  (plus the PoP if configured).
+- **CLI tool:** `esp-prov` or similar provisioning clients that speak the SoftAP
+  provisioning protocol.
+- **REST API:** The SoftAP provisioning service exposes a REST endpoint directly
+  on the device's SoftAP interface.
+
+On success the device stores the credentials, deinitializes provisioning, restarts
+as a station, and connects to your Wi-Fi.
+
+> **Note:** The provisioning service registers **no custom endpoints** — it handles
+> Wi-Fi credentials only. There is no provisioning path for server configuration or
+> other device settings.
+
+### 3. Server Endpoint Configuration
+
+After connecting to Wi-Fi, the control task connects to the server using the
+configured endpoint:
+
+| Setting | Default | Configured via |
+|---|---|---|
+| `device_id` | `esp32-000` | `nvs_config.c` default / runtime `set_config` |
+| `server_host` | `audio.example.local` | `nvs_config.c` default / runtime `set_config` |
+| `server_port` | `4433` | `nvs_config.c` default / runtime `set_config` |
+| `control_tls_enabled` | `true` | `nvs_config.c` default / runtime `set_config` |
+
+> **Placeholder host gap:** The device ships pointing at the placeholder hostname
+> `audio.example.local:4433`. The runtime way to change it is the `set_config`
+> control message (`POST /api/devices/{id}/config` on the server) — but that
+> requires the device to **already be connected** to a server (chicken-and-egg).
+>
+> Realistic ways to point a fresh device at your server:
+> 1. **DNS / hosts resolution** — make `audio.example.local` resolve to your server
+>    (via your router's DNS, a local DNS server, or the operator's `/etc/hosts`).
+>    The device connects to the placeholder name, which now reaches your server;
+>    then use `set_config` to persist a real hostname.
+> 2. **Change compiled defaults** — edit `server_host` in
+>    `client/components/nvs_config/nvs_config.c` before flashing.
+>
+> There is no provisioning-time path to set the server endpoint.
+
+### 4. TLS for the Control Channel
+
+`control_tls_enabled` is `true` by default. The TLS behavior depends on CA
+configuration (see `control_task.c`):
+
+- **LAN mode (default):** No CA is configured. The device connects via TLS but
+  **does not verify** the server certificate (`skip_common_name = true`). This is
+  acceptable only on a controlled, trusted LAN.
+- **Hardened mode:** Provision a PEM CA bundle into NVS under the key `server_ca`
+  (in the `audiocfg` namespace). On boot the device loads it and pins the server
+  certificate. Optionally provision `server_cn` to verify the server's Common Name.
+
+The device ships with **no bundled CA** — operators must provision `server_ca` into
+NVS to enable certificate pinning. Plain TCP (no TLS) can be selected by setting
+`control_tls_enabled = false`.
+
+### 5. Verify Onboarding Succeeded
+
+**Serial monitor** — watch for these log lines during a successful boot:
+
+```
+state BOOT --BOOT_DONE--> WIFI_CONNECTING
+... (or PROVISIONING if Wi-Fi not yet configured)
+wifi_mgr: got ip: 192.168.x.x
+app_main: control task started -> audio.example.local:4433 (tls=1)
+control_task: session established (hello_ack)
+state CONTROL_CONNECTING --CONTROL_CONNECTED--> IDLE
+```
+
+**Server-side check** — once connected, the device appears in the server's device list:
+
+```sh
+curl http://localhost:8080/api/devices
+# -> [{"device_id":"esp32-000", ...}]
+```
+
+### 6. Re-provision / Factory Reset
+
+**Re-provision Wi-Fi only:** The API `wifi_manager_reset_credentials()` exists and
+clears stored Wi-Fi credentials, causing the device to re-enter SoftAP provisioning
+on next boot. However, **no trigger is currently wired** — there is no physical
+reset button, GPIO, or software command bound to it in this build (see
+`client/P3_NOTES.md`). To re-provision Wi-Fi, erase the full flash (below) or
+re-flash the firmware.
+
+**Full factory reset:** Erase the device flash via Earthly's `+erase` target, which
+runs `esptool.py erase_flash` on the host. This erases NVS (including Wi-Fi
+credentials and all persistent config), so on next boot the device returns to
+SoftAP provisioning with default settings:
+
+```bash
+earthly +erase --PORT=/dev/ttyUSB0
+```
+
 ## Hardware Configuration & I2S Pin Mapping
 
 Hardware I2S audio pins can be configured through two paths:
