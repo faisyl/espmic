@@ -154,36 +154,19 @@ On every boot the firmware runs (see `client/main/app_main.c`):
 6. **Wi-Fi manager** initializes and attempts to connect.
 7. **On got-IP** — the control task starts and connects to `server_host:server_port`.
 
-### 2. Wi-Fi Provisioning (first boot)
+### 2. Provision Wi-Fi (BLE) — COMING SOON
 
-On first boot (or after a credentials reset) the device has no stored Wi-Fi
-credentials, so it automatically enters **SoftAP provisioning** via the ESP-IDF
-provisioning subsystem (`wifi_prov_scheme_softap`).
-
-- The device broadcasts a SoftAP with SSID **`PROV_ESP32`** (configurable via
-  `wifi_manager_config_t.service_name`, set in `app_main.c`).
-- If a proof-of-possession string (`pop`) is configured, provisioning uses
-  **Security 1**; otherwise it uses **Security 0** (open). The default has no PoP.
-- Wi-Fi credentials are stored by the provisioning subsystem in NVS — **not** by
-  `nvs_config` (see `nvs_config.h`).
-
-**To provision the device's Wi-Fi**, use one of the standard Espressif provisioning
-methods while the device is in provisioning mode:
-
-- **Mobile app:** Espressif's "ESP SoftAP Provisioning" app — scan for the
-  `PROV_ESP32` network, select it, and enter your home Wi-Fi SSID and password
-  (plus the PoP if configured).
-- **CLI tool:** `esp-prov` or similar provisioning clients that speak the SoftAP
-  provisioning protocol.
-- **REST API:** The SoftAP provisioning service exposes a REST endpoint directly
-  on the device's SoftAP interface.
-
-On success the device stores the credentials, deinitializes provisioning, restarts
-as a station, and connects to your Wi-Fi.
-
-> **Note:** The provisioning service registers **no custom endpoints** — it handles
-> Wi-Fi credentials only. There is no provisioning path for server configuration or
-> other device settings.
+> **Placeholder:** BLE-based Wi-Fi provisioning is in development. This section will be
+> updated with the exact BLE service name/UUID, proof-of-possession/security settings,
+> and supported provisioning apps (ESP BLE Provisioning app, `esp-prov --transport ble`)
+> once the BLE provisioning implementation lands.
+>
+> Until then, the device will enter provisioning mode on first boot (or after a
+> credentials reset) when no Wi-Fi credentials are stored. The provisioning flow is
+> transport-agnostic from the operator's perspective: the device broadcasts a
+> provisioning service, you connect to it with a provisioning app, and provide your
+> home Wi-Fi SSID and password. On success the device stores the credentials and
+> connects as a station.
 
 ### 3. Server Endpoint Configuration
 
@@ -251,7 +234,7 @@ curl http://localhost:8080/api/devices
 ### 6. Re-provision / Factory Reset
 
 **Re-provision Wi-Fi only:** The API `wifi_manager_reset_credentials()` exists and
-clears stored Wi-Fi credentials, causing the device to re-enter SoftAP provisioning
+clears stored Wi-Fi credentials, causing the device to re-enter provisioning mode
 on next boot. However, **no trigger is currently wired** — there is no physical
 reset button, GPIO, or software command bound to it in this build (see
 `client/P3_NOTES.md`). To re-provision Wi-Fi, erase the full flash (below) or
@@ -260,7 +243,7 @@ re-flash the firmware.
 **Full factory reset:** Erase the device flash via Earthly's `+erase` target, which
 runs `esptool.py erase_flash` on the host. This erases NVS (including Wi-Fi
 credentials and all persistent config), so on next boot the device returns to
-SoftAP provisioning with default settings:
+provisioning mode with default settings:
 
 ```bash
 earthly +erase --PORT=/dev/ttyUSB0
