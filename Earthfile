@@ -81,6 +81,40 @@ firmware-all:
     BUILD +firmware --TARGET=esp32s3
     BUILD +firmware --TARGET=esp32
 
+# ----------------------------------------------------------------------- erase
+# Erase the client device flash via esptool. Runs on the HOST via LOCALLY
+# because BuildKit containers cannot see the host USB serial port
+# (/dev/ttyUSB*). Requires esptool.py (+pyserial) installed on the host.
+erase:
+    ARG TARGET=esp32s3
+    ARG PORT=/dev/ttyUSB0
+    ARG BAUD=460800
+    LOCALLY
+    RUN esptool.py --chip $TARGET -p $PORT -b $BAUD erase_flash
+
+# ----------------------------------------------------------------------- flash
+# Flash the built client firmware to the device via esptool. Runs on the HOST
+# via LOCALLY (BuildKit containers cannot see the host USB serial port).
+# Requires the firmware to be built first (`earthly +firmware --TARGET=$TARGET`)
+# so the artifacts exist locally; the bootloader offset depends on the target
+# chip (0x0 for esp32s3, 0x1000 for esp32). Offsets match client/partitions.csv.
+flash:
+    ARG TARGET=esp32s3
+    ARG PORT=/dev/ttyUSB0
+    ARG BAUD=460800
+    LOCALLY
+    RUN if [ "$TARGET" = "esp32" ]; then \
+            BOOT_OFFSET=0x1000; \
+        else \
+            BOOT_OFFSET=0x0; \
+        fi; \
+        esptool.py --chip $TARGET -p $PORT -b $BAUD \
+            --before default_reset --after hard_reset \
+            write_flash --flash_mode dio --flash_size 8MB --flash_freq 40m \
+            $BOOT_OFFSET client/build-$TARGET/bootloader/bootloader.bin \
+            0x8000 client/build-$TARGET/partition_table/partition-table.bin \
+            0x10000 client/build-$TARGET/espmic_client.bin
+
 # ----------------------------------------------------------------------- all
 # Build everything: host tests + full firmware.
 all:

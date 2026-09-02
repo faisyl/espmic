@@ -107,6 +107,35 @@ minicom -D /dev/ttyUSB0 -b 115200
 
 *Note:* For target `esp32`, substitute `build-esp32s3` with `build-esp32` and set the appropriate bootloader offset if needed (typically `0x1000` for ESP32).
 
+### Flashing via Earthly (LOCALLY targets)
+
+The `+erase` and `+flash` Earthly targets run `esptool.py` **on the host** (via
+Earthly's `LOCALLY` directive), because BuildKit containers cannot see the host
+USB serial port. Build the firmware first, then flash:
+
+```bash
+# Build the firmware (produces client/build-esp32s3/ locally)
+earthly +firmware
+
+# Erase the device flash
+earthly +erase --PORT=/dev/ttyUSB0
+
+# Flash the built artifacts (esp32s3)
+earthly +flash --TARGET=esp32s3 --PORT=/dev/ttyUSB0
+
+# For ESP32 (note the different bootloader offset)
+earthly +flash --TARGET=esp32 --PORT=/dev/ttyUSB0
+```
+
+**Host requirements:**
+- `esptool.py` + `pyserial` installed on the host (`pip install esptool pyserial`).
+- Your user must have permission to the serial port (add yourself to the `dialout`
+  or `plugdev` group: `sudo usermod -aG dialout $USER`, then re-login).
+- These targets run on the host by design — they are not hermetic and are never cached.
+
+Flash offsets match `client/partitions.csv`: bootloader at `0x0` (esp32s3) or
+`0x1000` (esp32), partition table at `0x8000`, app at `0x10000`.
+
 ## Hardware Configuration & I2S Pin Mapping
 
 Hardware I2S audio pins can be configured through two paths:
