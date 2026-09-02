@@ -13,7 +13,8 @@
 #include "esp_log.h"
 
 #include "wifi_provisioning/manager.h"
-#include "wifi_provisioning/scheme_softap.h"
+#include "wifi_provisioning/scheme_ble.h"
+#include "esp_bt.h"
 
 static const char *TAG = "wifi_mgr";
 
@@ -84,6 +85,9 @@ static void event_handler(void *arg, esp_event_base_t base,
         case WIFI_PROV_END:
             /* Stop the provisioning service after successful setup (spec 13). */
             wifi_prov_mgr_deinit();
+            /* Return the BLE stack RAM to the app heap now provisioning is done
+             * — important on no-PSRAM boards where RAM is tight. */
+            esp_bt_mem_release(ESP_BT_MODE_BTDM);
             g.provisioning = false;
             ESP_LOGI(TAG, "provisioning ended");
             break;
@@ -159,10 +163,20 @@ esp_err_t wifi_manager_init(const wifi_manager_config_t *cfg)
 static esp_err_t start_provisioning(void)
 {
     wifi_prov_mgr_config_t pcfg = {
-        .scheme = wifi_prov_scheme_softap,
+        .scheme = wifi_prov_scheme_ble,
         .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE,
     };
     ESP_ERROR_CHECK(wifi_prov_mgr_init(pcfg));
+
+    /* Set the 128-bit BLE service UUID for Espressif Unified Provisioning.
+     * This is the standard Espressif provisioning service
+     * (0000ffff-0000-1000-8000-00805f9b34fb, little-endian), recognised by the
+     * ESP Provisioning / ESP SoftAP apps out of the box. */
+    const uint8_t service_uuid[16] = {
+        0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80,
+        0x00, 0x10, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
+    };
+    ESP_ERROR_CHECK(wifi_prov_scheme_ble_set_service_uuid(service_uuid));
 
     const char *service = g.cfg.service_name[0] ? g.cfg.service_name : "PROV_ESP32";
     const char *pop = g.cfg.pop[0] ? g.cfg.pop : NULL;
@@ -179,7 +193,7 @@ esp_err_t wifi_manager_start(void)
     bool provisioned = false;
     /* wifi_prov_mgr must be temporarily inited to query provisioning state. */
     wifi_prov_mgr_config_t pcfg = {
-        .scheme = wifi_prov_scheme_softap,
+        .scheme = wifi_prov_scheme_ble,
         .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE,
     };
     ESP_ERROR_CHECK(wifi_prov_mgr_init(pcfg));

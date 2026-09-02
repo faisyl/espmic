@@ -20,7 +20,16 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
 
 # --- Wi-Fi ---
-CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+# SoftAP is no longer used (provisioning switched to BLE); disabling reclaims
+# flash + RAM.
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
+
+# --- Bluetooth (BLE provisioning via Espressif Unified Provisioning) ---
+# NimBLE is lighter than Bluedroid and sufficient for BLE-only provisioning.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
 
 # --- TLS (mbedtls) ---
 CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN=16384
