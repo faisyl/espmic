@@ -113,42 +113,45 @@ Hardware I2S audio pins can be configured through two paths:
 
 ### Path A: Build-Time Defaults (Source Configuration)
 
-Default pin mappings are defined in `client/components/nvs_config/nvs_config.c` inside `nvs_config_defaults()`:
-- `i2s_bclk`: GPIO 5 (Bit Clock)
-- `i2s_ws`:   GPIO 6 (Word Select / LR Clock)
-- `i2s_din`:  GPIO 4 (Data In from ICS43434)
+The boot-default pin mapping lives in a single top-level header, `client/board_config.h`
+(next to `client/CMakeLists.txt`). Every module reads your board's pin choices from this
+file via three macros:
+- `BOARD_I2S_BCLK_GPIO`: GPIO 5 (Bit Clock)
+- `BOARD_I2S_WS_GPIO`:   GPIO 6 (Word Select / LR Clock)
+- `BOARD_I2S_DIN_GPIO`:  GPIO 4 (Data In from ICS43434)
 
-To change the default pin mapping permanently in source code:
-1. Edit `client/components/nvs_config/nvs_config.c` (modify `i2s_bclk_gpio`, `i2s_ws_gpio`, `i2s_din_gpio`).
+To change the boot-default pin mapping:
+1. Edit `client/board_config.h` — set the macro value(s) to match your wiring.
 2. Rebuild the firmware (`earthly +firmware` or `idf.py build`).
 3. Re-flash the board.
 
-**NVS Override Precedence:** At boot, `nvs_config_load()` attempts to restore previously saved values from NVS (`KEY_I2S_BCLK`, `KEY_I2S_WS`, `KEY_I2S_DIN`). If valid values exist in NVS (e.g. from a prior runtime configuration or NVS provisioning), they override the compiled defaults.
+**NVS Override Precedence:** These are *boot defaults only*. At boot, `nvs_config_load()`
+restores any previously saved values from NVS (`KEY_I2S_BCLK`, `KEY_I2S_WS`, `KEY_I2S_DIN`);
+if valid values exist in NVS they override the header defaults without touching
+`board_config.h`. Runtime `set_config` updates (below) behave the same way.
 
-### Path B: Runtime Configuration via `set_config` Control Message
+### Path B: Runtime Configuration via the Server Device-Config API
 
-The firmware supports dynamic pin reassignment over the TLS/TCP control channel using the `set_config` JSON message:
+To change I2S pins on a deployed device at runtime, push a config update to the device
+over its live control session via the server's device-config endpoint:
 
-```json
-{
-  "type": "set_config",
-  "request_id": "req-101",
-  "default_bitrate": 128000,
-  "server_host": "audio.example.local",
-  "i2s_bclk": 5,
-  "i2s_ws": 6,
-  "i2s_din": 4
-}
 ```
+POST /api/devices/{id}/config
+```
+
+with a JSON body containing the fields to change, e.g. `{"i2s_bclk":5,"i2s_ws":6,"i2s_din":4}`.
+The device must be connected to the server's control channel. Pin values are validated
+to the GPIO range `0..47`; changes persist to NVS and take effect on the next boot or
+stream (re)start.
+
+Full endpoint reference, request/response table, and `curl` examples live in the server
+README's "Push runtime config" section — see `server/README.md`.
 
 Validation & Semantics:
 - `i2s_bclk`, `i2s_ws`, and `i2s_din` accept integer values in the valid GPIO range `0..47`.
-- Provided pins are validated as a group; if any specified pin is outside `0..47`, the entire update is rejected with an `invalid_config` error.
+- Provided pins are validated as a group; if any specified pin is outside `0..47`, the update is rejected.
 - Valid pin settings persist immediately to NVS keys `i2s_bclk`, `i2s_ws`, and `i2s_din`.
 - **Apply-on-restart:** Because the I2S peripheral channel is initialized once at device startup (`audio_manager_init`), updated pin configurations persist to NVS immediately and take effect on the next boot or stream (re)start.
-
-> **Operator Delivery Path & Server Capability Note:**
-> The client firmware processes `set_config` messages over its persistent control channel. However, the included Go server (`espmic-server`) does **not** currently implement a `set_config` message handler or expose an operator HTTP API / CLI tool to push configuration updates to connected devices. Sending `set_config` at runtime requires a custom control-channel client or tool that connects directly to the device's control protocol.
 
 ## Project Structure
 
