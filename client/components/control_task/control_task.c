@@ -16,6 +16,7 @@
 #include "esp_task_wdt.h"
 #include "esp_log.h"
 #include "esp_tls.h"
+#include "esp_heap_caps.h"
 #include "nvs.h"
 #include "cJSON.h"
 
@@ -258,7 +259,8 @@ static void send_hello(void)
     cJSON_AddNumberToObject(caps, "channels", 2);
     cJSON *codecs = cJSON_AddArrayToObject(caps, "codecs");
     cJSON_AddItemToArray(codecs, cJSON_CreateString("opus"));
-    cJSON_AddBoolToObject(caps, "psram", true);
+    cJSON_AddBoolToObject(caps, "psram",
+                           heap_caps_get_total_size(MALLOC_CAP_SPIRAM) > 0);
     send_json(root);
 }
 

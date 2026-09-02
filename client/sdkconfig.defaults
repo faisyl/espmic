@@ -10,6 +10,10 @@ CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 # --- PSRAM (mode + speed are per-target; see sdkconfig.defaults.esp32s3/.esp32) ---
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# Allow boot to CONTINUE when PSRAM is absent (e.g. ESP32-D0WD boards) while
+# still using PSRAM when present. Without this, ESP-IDF aborts at boot if the
+# PSRAM chip is not found. The audio pipeline falls back to internal RAM.
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
 
 # --- FreeRTOS ---
 CONFIG_FREERTOS_HZ=1000
