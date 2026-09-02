@@ -2,6 +2,7 @@
  * nvs_config.c - Persistent device configuration store (spec Section 16).
  */
 #include "nvs_config.h"
+#include "board_config.h"
 
 #include <string.h>
 #include "nvs.h"
@@ -20,8 +21,9 @@ static const char *TAG = "nvs_config";
 #define KEY_I2S_WS      "i2s_ws"
 #define KEY_I2S_DIN     "i2s_din"
 
-/* Compiled-in defaults. GPIO defaults are example board values; real boards
- * override via NVS (spec Section 5 notes GPIO is board-specific). */
+/* Compiled-in defaults. GPIO defaults come from board_config.h (single source
+ * of truth at the top of the client tree); real boards override via NVS at
+ * runtime (spec Section 5 notes GPIO is board-specific, Section 16 NVS). */
 void nvs_config_defaults(device_config_t *cfg)
 {
     if (!cfg) return;
@@ -31,9 +33,9 @@ void nvs_config_defaults(device_config_t *cfg)
     cfg->server_port         = 4433;
     cfg->control_tls_enabled = true;
     cfg->default_bitrate     = 128000;
-    cfg->i2s_bclk_gpio       = 5;
-    cfg->i2s_ws_gpio         = 6;
-    cfg->i2s_din_gpio        = 4;
+    cfg->i2s_bclk_gpio       = BOARD_I2S_BCLK_GPIO;
+    cfg->i2s_ws_gpio         = BOARD_I2S_WS_GPIO;
+    cfg->i2s_din_gpio        = BOARD_I2S_DIN_GPIO;
 }
 
 /* Read a string key into dst; leaves dst unchanged if the key is absent. */
