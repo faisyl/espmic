@@ -1,16 +1,27 @@
 package api
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	"espmic/server/internal/config"
+	"espmic/server/internal/control"
 )
+
+// configTimeout bounds how long a device may take to echo a set_config reply
+// before the endpoint reports a timeout (504).
+const configTimeout = 5 * time.Second
 
 // Server is the dependency surface the API handlers need (spec §15-§16).
 type Server interface {
 	DeviceList() interface{}
 	MetricsSurface() interface{}
+	PushConfig(ctx context.Context, deviceID string, cfg control.SetConfig) (control.Message, error)
 }
 
 // Handlers holds the server reference and implements each §15 endpoint.
@@ -35,6 +46,7 @@ func RegisterRoutes(mux *http.ServeMux, cfg *config.Config, srv Server) {
 	mux.HandleFunc("GET /api/devices", h.handleDevices)
 	mux.HandleFunc("GET /api/devices/{id}", h.handleDevice)
 	mux.HandleFunc("POST /api/devices/{id}/stream", h.handleStartStream)
+	mux.HandleFunc("POST /api/devices/{id}/config", h.handleConfig)
 	mux.HandleFunc("DELETE /api/streams/{id}", h.handleStopStream)
 	mux.HandleFunc("GET /api/streams/{id}", h.handleStream)
 	mux.HandleFunc("GET /api/streams/{id}/stats", h.handleStreamStats)
@@ -80,6 +92,69 @@ func (h *Handlers) handleStartStream(w http.ResponseWriter, r *http.Request) {
 		"stream_id": "placeholder-" + id,
 		"state":     "starting",
 	})
+}
+
+// handleConfig pushes a set_config command to a connected device's live
+// control session (spec §10). It validates the request (400), checks the
+// device is connected (404), sends set_config and returns the device's echoed
+// status (200), its rejection error (502), or a timeout (504).
+func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing device id"})
+		return
+	}
+
+	var req control.SetConfig
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	req.Type = control.TypeSetConfig
+	req.RequestID = newRequestID()
+
+	if err := req.Validate(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), configTimeout)
+	defer cancel()
+
+	msg, err := h.srv.PushConfig(ctx, id, req)
+	switch {
+	case errors.Is(err, control.ErrNotConnected):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not connected"})
+		return
+	case errors.Is(err, context.DeadlineExceeded):
+		writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "device did not respond"})
+		return
+	case err != nil:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// A correlated error reply means the device rejected the config (502).
+	if _, rejected := msg.(*control.Error); rejected {
+		writeJSON(w, http.StatusBadGateway, msg)
+		return
+	}
+	// Success: the device echoed its new status (200).
+	writeJSON(w, http.StatusOK, msg)
+}
+
+// newRequestID returns a random request id used to correlate a set_config
+// command with the device's status/error reply.
+func newRequestID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("cfg-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("cfg-%x", b[:])
 }
 
 func (h *Handlers) handleStopStream(w http.ResponseWriter, r *http.Request) {

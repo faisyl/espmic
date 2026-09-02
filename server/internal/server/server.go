@@ -33,6 +33,7 @@ type Server struct {
 	metrics *metrics.Metrics
 	rtp     *rtp.Receiver
 	bus     *audio.PCMBus
+	ctrl    *control.SessionManager
 
 	httpServer *http.Server
 	controlLn  net.Listener
@@ -61,6 +62,7 @@ func New(cfg *config.Config) (*Server, error) {
 		metrics: m,
 		rtp:     rtp.NewReceiver(m),
 		bus:     audio.NewPCMBus(),
+		ctrl:    control.NewSessionManager(),
 		ctx:     ctx,
 		cancel:  cancel,
 	}
@@ -96,10 +98,11 @@ func (s *Server) controlLoop(ln net.Listener) {
 		if err != nil {
 			return
 		}
-		sess := control.NewSession(conn, s, time.Now, func(msg control.Message) {
-			log.Printf("control msg: %s", msg.Kind())
-		})
+		sess := control.NewSession(conn, s, time.Now, nil)
+		sess.SetOnMsg(s.ctrl.Handler())
+		sess.SetOnReady(s.ctrl.OnReady)
 		go func() {
+			defer s.ctrl.Unregister(sess.DeviceID())
 			_ = sess.Run(s.ctx)
 		}()
 	}
@@ -119,6 +122,13 @@ func (s *Server) MetricsSurface() interface{} {
 // DeviceList returns registered devices (§15).
 func (s *Server) DeviceList() interface{} {
 	return s.device.List()
+}
+
+// PushConfig sends a set_config command to a device's live control session and
+// awaits the correlated status/error reply (spec §10 set_config). It returns
+// control.ErrNotConnected if the device is offline.
+func (s *Server) PushConfig(ctx context.Context, deviceID string, cfg control.SetConfig) (control.Message, error) {
+	return s.ctrl.SendSetConfig(ctx, deviceID, &cfg)
 }
 
 func (s *Server) Close() error {

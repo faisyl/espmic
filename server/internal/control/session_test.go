@@ -16,12 +16,13 @@ import (
 // streaming frame reader; reads pull framed messages from a channel. This
 // coalesces multi-Write frames and is race-free.
 type chanConn struct {
-	readCh   chan []byte // test -> session: framed messages to deliver
-	mu       sync.Mutex
-	writeBuf []byte
-	writeSig chan struct{}
-	closed   chan struct{}
-	fr       *FrameReader
+	readCh       chan []byte // test -> session: framed messages to deliver
+	mu           sync.Mutex
+	writeBuf     []byte
+	writeOffset  int    // bytes already pushed to fr (avoids duplicate frame reads)
+	writeSig     chan struct{}
+	closed       chan struct{}
+	fr           *FrameReader
 }
 
 func newChanConn() *chanConn {
@@ -90,7 +91,9 @@ func (c *chanConn) nextWrite(t *testing.T, timeout time.Duration) Message {
 	deadline := time.Now().Add(timeout)
 	for {
 		c.mu.Lock()
-		frames, needMore, err := c.fr.Push(c.writeBuf)
+		newBytes := c.writeBuf[c.writeOffset:]
+		frames, needMore, err := c.fr.Push(newBytes)
+		c.writeOffset = len(c.writeBuf) // all current bytes have been pushed
 		c.mu.Unlock()
 		if err != nil {
 			t.Fatalf("frame reader: %v", err)

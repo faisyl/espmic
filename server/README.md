@@ -77,12 +77,63 @@ At startup, `espmic-server` logs these build variables, and the `GET /health` en
 | `GET /api/devices` | List devices |
 | `GET /api/devices/{id}` | Device metadata |
 | `POST /api/devices/{id}/stream` | Start managed stream (§16) |
+| `POST /api/devices/{id}/config` | Push runtime config to a connected device (§10) |
 | `DELETE /api/streams/{id}` | Stop stream |
 | `GET /api/streams/{id}` | Stream state |
 | `GET /api/streams/{id}/stats` | RTP/decoder statistics |
 | `GET /api/recordings/{id}` | Recording metadata |
 | `GET /api/recordings/{id}/download` | Retrieve recording |
 | `GET /api/metrics` | Statistics (§18) |
+
+### Push runtime config (POST /api/devices/{id}/config)
+
+Push a `set_config` command to a device's live control session. The server
+validates the request, correlates the device's `status`/`error` reply by
+`request_id`, and returns the result.
+
+**Request body** (JSON, at least one field required):
+
+| Field | Type | Range | Description |
+|---|---|---|---|
+| `default_bitrate` | int | ≥ 0 | Apply bitrate immediately (spec §10) |
+| `server_host` | string | non-empty | Persisted in NVS, applied on next boot |
+| `i2s_bclk` | int | 0–47 | I2S bit-clock GPIO; persisted, applied on next boot |
+| `i2s_ws` | int | 0–47 | I2S word-select GPIO |
+| `i2s_din` | int | 0–47 | I2S serial data-in GPIO |
+
+**Responses:**
+
+| Status | Meaning |
+|---|---|
+| `200 OK` | Device echoed its new status |
+| `400 Bad Request` | Invalid JSON or field out of range (server-side validation) |
+| `404 Not Found` | Device is not currently connected |
+| `502 Bad Gateway` | Device explicitly rejected the config (`error` reply) |
+| `504 Gateway Timeout` | Device did not reply within the 5 s deadline |
+
+**curl examples:**
+
+```sh
+# Set I2S pins for a connected device
+curl -s -X POST http://localhost:8080/api/devices/esp32-001/config \
+  -H 'Content-Type: application/json' \
+  -d '{"i2s_bclk":5,"i2s_ws":6,"i2s_din":4}'
+# -> {"type":"status","state":"IDLE","stream_id":"...",...}
+
+# Change bitrate and server host
+curl -s -X POST http://localhost:8080/api/devices/esp32-001/config \
+  -H 'Content-Type: application/json' \
+  -d '{"default_bitrate":256000,"server_host":"audio.new.local"}'
+
+# Device not connected -> 404
+# -> {"error":"device not connected"}
+
+# Invalid pin -> 400
+curl -s -X POST http://localhost:8080/api/devices/esp32-001/config \
+  -H 'Content-Type: application/json' \
+  -d '{"i2s_bclk":48}'
+# -> {"error":"control: i2s_bclk out of range 0..47: 48"}
+```
 
 ## Dependencies (pinned in go.mod)
 

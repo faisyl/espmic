@@ -35,6 +35,8 @@ type Session struct {
 	readBuf    [1024]byte // reusable read buffer (Jim S2 minor: avoid per-call alloc)
 	deviceID   string
 	registered bool
+
+	onReady func(*Session)
 }
 
 // NewSession returns a session bound to conn. auth validates the hello. now
@@ -58,6 +60,16 @@ func (s *Session) ID() string { return s.id }
 
 // DeviceID returns the authenticated device id (empty before).
 func (s *Session) DeviceID() string { return s.deviceID }
+
+// SetOnMsg sets the inbound-message handler invoked for each decoded message
+// after hello_ack. It must be called before Run; it lets the caller wire a
+// handler that needs a reference to the session itself.
+func (s *Session) SetOnMsg(h func(Message)) { s.onMsg = h }
+
+// SetOnReady sets a callback invoked once the session is authenticated (after
+// hello_ack, when DeviceID is known). It must be called before Run; used to
+// register the session with a SessionManager.
+func (s *Session) SetOnReady(h func(*Session)) { s.onReady = h }
 
 // Run drives the session until ctx is cancelled or the connection closes.
 func (s *Session) Run(ctx context.Context) error {
@@ -94,6 +106,10 @@ func (s *Session) Run(ctx context.Context) error {
 
 	if err := s.writeMsg(NewHelloAck(s.id, s.deviceID)); err != nil {
 		return fmt.Errorf("control: write hello_ack: %w", err)
+	}
+
+	if s.onReady != nil {
+		s.onReady(s)
 	}
 
 	hb := time.NewTicker(30 * time.Second)
@@ -160,6 +176,13 @@ func (s *Session) readFrame() ([]byte, error) {
 			return nil, ErrFrameTooLarge
 		}
 	}
+}
+
+// Send writes a command message to the device over the control connection
+// (spec §9). It serialises concurrent heartbeats and command writes. Safe to
+// call from any goroutine after the session is authenticated.
+func (s *Session) Send(msg Message) error {
+	return s.writeMsg(msg)
 }
 
 // writeMsg sends a framed message (spec §7). Serialises concurrent heartbeats
