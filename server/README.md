@@ -35,9 +35,13 @@ server/
     server/              end-to-end wiring                 (spec §3)
 ```
 
-## Build & test
+## Build & Setup
 
-Go 1.26 is required (no container needed for build/test).
+### Prerequisites
+
+- **Go 1.26+** (pure Go implementation, `CGO_ENABLED=0`, no C library or compiler dependencies required).
+
+### Building & Testing
 
 ```sh
 go build ./...
@@ -45,17 +49,63 @@ go vet ./...
 go test -race ./...
 ```
 
-## Run
+### Configuration Environment Variables
+
+Configuration is loaded from environment variables with sensible local defaults (source of truth: `internal/config/config.go`):
+
+| Environment Variable | Default | Type | Description |
+|---|---|---|---|
+| `ESPMIC_HTTP_ADDR` | `:8080` | string | HTTP management API listen address |
+| `ESPMIC_CONTROL_ADDR` | `:9000` | string | Control channel TCP/TLS listen address for client devices |
+| `ESPMIC_TLS_CERT` | `""` | string | Path to PEM certificate for TLS control plane (empty = plain TCP) |
+| `ESPMIC_TLS_KEY` | `""` | string | Path to PEM private key for TLS control plane (empty = plain TCP) |
+| `ESPMIC_JITTER_TARGET_MS` | `60` | int | Target playout delay for jitter buffer in milliseconds |
+| `ESPMIC_RTP_WAIT_TIMEOUT_S` | `5` | int | Timeout in seconds waiting for RTP packets post stream start |
+| `ESPMIC_DB_PATH` | `espmic.db` | string | Path to SQLite database file |
+
+### Listening Ports & Protocols
+
+- **Port `8080` (TCP - HTTP):** Serves the management REST API (`/health`, `/api/devices`, `/api/streams`, `/api/metrics`) and WebSocket endpoints for live audio monitoring.
+- **Port `9000` (TCP / TLS):** Persistent control connection listener for ESP32 clients. If `ESPMIC_TLS_CERT` and `ESPMIC_TLS_KEY` environment variables are configured, TLS encryption is enabled; otherwise, it operates over plain TCP.
+
+## Running the Server
+
+### Option 1: Direct Execution (Local Binary)
+
+```sh
+# Build static server binary
+go build -o espmic-server ./cmd/server
+
+# Run binary with default settings
+./espmic-server
+
+# Override settings via environment variables
+ESPMIC_HTTP_ADDR=:8080 ESPMIC_CONTROL_ADDR=:9000 ./espmic-server
+```
+
+### Option 2: Development Run
 
 ```sh
 go run ./cmd/server
-# defaults: HTTP :8080, control :9000; override via env vars
-curl localhost:8080/health          # -> {"status":"ok","version":"dev"}
-curl localhost:8080/api/metrics     # -> {statistics snapshot}
-curl localhost:8080/api/devices     # -> [device list]
 ```
 
-Sends SIGTERM/SIGINT for graceful shutdown.
+### Option 3: Docker Compose
+
+```sh
+# Run containerized server stack from the server/ directory
+docker compose up --build
+```
+
+### Server Health Verification
+
+Verify server operation by querying the health endpoint:
+
+```sh
+curl http://localhost:8080/health
+# Response: {"status":"ok","version":"dev"}
+```
+
+Sends SIGTERM or SIGINT (`Ctrl+C`) for graceful shutdown.
 
 ## Version Stamping
 
