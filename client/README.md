@@ -154,19 +154,37 @@ On every boot the firmware runs (see `client/main/app_main.c`):
 6. **Wi-Fi manager** initializes and attempts to connect.
 7. **On got-IP** — the control task starts and connects to `server_host:server_port`.
 
-### 2. Provision Wi-Fi (BLE) — COMING SOON
+### 2. Provision Wi-Fi (BLE)
 
-> **Placeholder:** BLE-based Wi-Fi provisioning is in development. This section will be
-> updated with the exact BLE service name/UUID, proof-of-possession/security settings,
-> and supported provisioning apps (ESP BLE Provisioning app, `esp-prov --transport ble`)
-> once the BLE provisioning implementation lands.
->
-> Until then, the device will enter provisioning mode on first boot (or after a
-> credentials reset) when no Wi-Fi credentials are stored. The provisioning flow is
-> transport-agnostic from the operator's perspective: the device broadcasts a
-> provisioning service, you connect to it with a provisioning app, and provide your
-> home Wi-Fi SSID and password. On success the device stores the credentials and
-> connects as a station.
+On first boot (or after a credentials reset) the device has no stored Wi-Fi
+credentials, so it automatically enters **BLE provisioning** via Espressif Unified
+Provisioning over NimBLE.
+
+- The device advertises as a BLE peripheral using the standard Espressif provisioning
+  service UUID `0000ffff-0000-1000-8000-00805f9b34fb`.
+- The **advertised name** defaults to `PROV_ESP32` (configurable via
+  `wifi_manager_config_t.service_name`, set in `app_main.c`).
+- If a proof-of-possession string (`pop`) is configured, provisioning uses
+  **Security 1** (encrypted); otherwise it uses **Security 0** (open). The default
+  has no PoP.
+- Wi-Fi credentials are stored by the provisioning subsystem in NVS — **not** by
+  `nvs_config` (see `nvs_config.h`).
+
+**To provision the device's Wi-Fi**, use one of the following while the device is in
+provisioning mode:
+
+- **Mobile app:** Espressif "ESP BLE Provisioning" app (Android/iOS) — scan for the
+  device by its advertised name (`PROV_ESP32`), connect, optionally enter the PoP if
+  Security 1 is set, then send your home Wi-Fi SSID and password.
+- **CLI tool:** `esp-prov --transport ble` — select the device by its advertised name,
+  provide the PoP if configured, and send home Wi-Fi credentials.
+
+On success the device stores the credentials, releases BLE stack RAM
+(`esp_bt_mem_release`), restarts, and connects as a station. The provisioning service
+registers **no custom endpoints** — it handles Wi-Fi credentials only.
+
+> **Note:** Re-provisioning only happens if credentials are cleared (via
+> `wifi_manager_reset_credentials()` or `earthly +erase` wiping NVS).
 
 ### 3. Server Endpoint Configuration
 
