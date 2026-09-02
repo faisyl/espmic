@@ -2,8 +2,9 @@
  * wifi_manager.h - Wi-Fi station + provisioning (spec Sections 11, 12, 13, 16).
  *
  * Owns the Wi-Fi lifecycle: attempts NVS-stored credentials on boot, enters
- * ESP-IDF SoftAP provisioning when credentials are absent or reset, and
- * auto-reconnects the station on disconnect. Wi-Fi credentials are persisted by
+ * ESP-IDF BLE provisioning (wifi_prov_scheme_ble) when credentials are absent
+ * or reset, and auto-reconnects the station on disconnect. Wi-Fi credentials are
+ * persisted by
  * the provisioning subsystem in NVS (they are NOT stored by nvs_config).
  *
  * Connection state changes are surfaced through callbacks so the higher layer
@@ -32,7 +33,7 @@ typedef struct {
 
     /* Provisioning service identity. If pop[0]==0 no proof-of-possession is
      * used. The server auth secret is never exposed here (spec Section 13). */
-    char service_name[32]; /* SoftAP SSID, e.g. "PROV_esp32" */
+     char service_name[32]; /* BLE advertised service/device name, e.g. "PROV_esp32" */
     char pop[33];          /* proof of possession, optional */
 } wifi_manager_config_t;
 
