@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 )
 
@@ -30,10 +31,13 @@ func NewSessionManager() *SessionManager {
 }
 
 // Handler returns the inbound-message handler to pass to Session.SetOnMsg. It
-// routes status/error replies to awaiting set_config callers.
+// routes status/error replies to awaiting set_config callers; any other
+// message type is logged at debug level for observability.
 func (m *SessionManager) Handler() func(Message) {
 	return func(msg Message) {
-		m.deliverRequest(msg)
+		if !m.deliverRequest(msg) {
+			log.Printf("session_mgr: unhandled inbound %s", msg.Kind())
+		}
 	}
 }
 
@@ -46,15 +50,6 @@ func (m *SessionManager) OnReady(s *Session) {
 	if s != nil && s.DeviceID() != "" {
 		m.sessions[s.DeviceID()] = s
 	}
-}
-
-func (m *SessionManager) handleInbound(s *Session, msg Message) {
-	if s != nil && s.DeviceID() != "" {
-		m.mu.Lock()
-		m.sessions[s.DeviceID()] = s
-		m.mu.Unlock()
-	}
-	m.deliverRequest(msg)
 }
 
 // Unregister removes a device's live session (call on disconnect).
