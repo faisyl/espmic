@@ -229,8 +229,9 @@ void app_main(void)
         .user                   = NULL,
     };
     strncpy(wcfg.service_name, "PROV_ESP32", sizeof(wcfg.service_name) - 1);
-    /* pop left empty => open provisioning (SECURITY_0). The server auth secret
-     * is never exposed via provisioning (spec Section 13). */
+    /* Security 1 (encrypted) with Proof-of-Possession 'espmic-setup'. The ESP BLE
+     * Provisioning app defaults to Security 1 and expects this PoP. */
+    strncpy(wcfg.pop, "espmic-setup", sizeof(wcfg.pop) - 1);
     if (wifi_manager_init(&wcfg) != ESP_OK) {
         go_fatal("wifi_manager_init failed");
         return;

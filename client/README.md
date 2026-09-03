@@ -184,9 +184,8 @@ Provisioning over NimBLE.
   service UUID `0000ffff-0000-1000-8000-00805f9b34fb`.
 - The **advertised name** defaults to `PROV_ESP32` (configurable via
   `wifi_manager_config_t.service_name`, set in `app_main.c`).
-- If a proof-of-possession string (`pop`) is configured, provisioning uses
-  **Security 1** (encrypted); otherwise it uses **Security 0** (open). The default
-  has no PoP.
+- Provisioning uses **Security 1** (encrypted, X25519+AES-CTR) with the default
+  Proof-of-Possession `espmic-setup`. The ESP BLE Provisioning app expects this PoP.
 - Wi-Fi credentials are stored by the provisioning subsystem in NVS — **not** by
   `nvs_config` (see `nvs_config.h`).
 
@@ -194,10 +193,10 @@ Provisioning over NimBLE.
 provisioning mode:
 
 - **Mobile app:** Espressif "ESP BLE Provisioning" app (Android/iOS) — scan for the
-  device by its advertised name (`PROV_ESP32`), connect, optionally enter the PoP if
-  Security 1 is set, then send your home Wi-Fi SSID and password.
-- **CLI tool:** `esp-prov --transport ble` — select the device by its advertised name,
-  provide the PoP if configured, and send home Wi-Fi credentials.
+  device by its advertised name (`PROV_ESP32`), connect, enter the PoP `espmic-setup`,
+  then send your home Wi-Fi SSID and password.
+- **CLI tool:** `esp-prov --transport ble --sec_ver 1 --pop espmic-setup` — select the
+  device by its advertised name and send home Wi-Fi credentials.
 
 On success the device stores the credentials, releases BLE stack RAM
 (`esp_bt_mem_release`), restarts, and connects as a station. The provisioning service
