@@ -27,13 +27,13 @@ extern "C" {
 #endif
 
 /* I2S bit-clock (BCLK) GPIO — boot default. Overridden by NVS / set_config. */
-#define BOARD_I2S_BCLK_GPIO 5
+#define BOARD_I2S_BCLK_GPIO 18
 
 /* I2S word-select (WS / LRCK) GPIO — boot default. Overridden by NVS / set_config. */
-#define BOARD_I2S_WS_GPIO   6
+#define BOARD_I2S_WS_GPIO   19
 
 /* I2S serial data-in (DIN) GPIO — boot default. Overridden by NVS / set_config. */
-#define BOARD_I2S_DIN_GPIO  4
+#define BOARD_I2S_DIN_GPIO  24
 
 #ifdef __cplusplus
 }
