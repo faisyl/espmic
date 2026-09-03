@@ -47,6 +47,26 @@ Warm rebuilds are accelerated using `.earthlyignore` (prevents local build
 artifacts from busting the build context cache) and persistent `CACHE` mounts for
 `ccache` (`/root/.cache/ccache`) and component-manager downloads (`/root/.cache/Espressif`).
 
+### Build cache behavior
+
+**Base image (`espressif/idf`):** The base image (~4 GB) is tagged by a mutable release
+tag (`release-v5.5`). On every build Earthly prints `--> Load metadata espressif/idf...`
+— this is a lightweight registry HEAD request to check if the tag's digest changed,
+**NOT** a re-pull. If the digest is unchanged, the build proceeds instantly from cache
+(warm build ~17s). Only when the remote digest changes does Earthly re-download layers.
+
+For reproducibility, you can pin the image by digest in the Earthfile (`FROM
+espressif/idf:release-v5.5@sha256:<digest>`). Note: a digest pin uses a different buildkit
+cache key, so the first warm build after the change will re-pull; subsequent warm builds
+remain fast. To see the current digest: `docker image inspect espressif/idf:release-v5.5
+--format '{{index .RepoDigests 0}}'`.
+
+**Buildkit cache:** The buildkit daemon's cache (visible via `docker exec earthly-buildkitd
+buildctl du -v`) should comfortably hold the base image + build layers (~16 GB default cap).
+If the base image seems to be re-pulled every build (multi-minute cold times repeatedly),
+the buildkit cache may be below the image size — increase the cap:
+`earthly config global.cache_size_mb <value>` and restart `earthly buildkit restart`.
+
 ## Target selection & SDK configuration
 
 The firmware build is parameterized by chip target via the Earthfile `TARGET`
