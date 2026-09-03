@@ -84,13 +84,13 @@ firmware-all:
 # ----------------------------------------------------------------------- erase
 # Erase the client device flash via esptool. Runs on the HOST via LOCALLY
 # because BuildKit containers cannot see the host USB serial port
-# (/dev/ttyUSB*). Requires esptool.py (+pyserial) installed on the host.
+# (/dev/ttyUSB*). Requires esptool (+pyserial) installed on the host.
 erase:
     ARG TARGET=esp32s3
     ARG PORT=/dev/ttyUSB0
     ARG BAUD=460800
     LOCALLY
-    RUN esptool.py --chip $TARGET -p $PORT -b $BAUD erase_flash
+    RUN esptool --chip $TARGET -p $PORT -b $BAUD erase-flash
 
 # ----------------------------------------------------------------------- flash
 # Flash the built client firmware to the device via esptool. Runs on the HOST
@@ -110,7 +110,7 @@ flash:
         else \
             BOOT_OFFSET=0x0; \
         fi; \
-        esptool.py --chip $TARGET -p $PORT -b $BAUD \
+        esptool --chip $TARGET -p $PORT -b $BAUD \
             --before default_reset --after hard_reset \
             write_flash --flash_mode dio --flash_size detect --flash_freq 40m \
             $BOOT_OFFSET client/build-$TARGET/bootloader/bootloader.bin \
