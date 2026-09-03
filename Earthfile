@@ -98,6 +98,8 @@ erase:
 # Requires the firmware to be built first (`earthly +firmware --TARGET=$TARGET`)
 # so the artifacts exist locally; the bootloader offset depends on the target
 # chip (0x0 for esp32s3, 0x1000 for esp32). Offsets match client/partitions.csv.
+# --flash_size detect auto-detects the chip and patches the image header to
+# match, so this works for both 4MB and 8MB boards.
 flash:
     ARG TARGET=esp32s3
     ARG PORT=/dev/ttyUSB0
@@ -110,7 +112,7 @@ flash:
         fi; \
         esptool.py --chip $TARGET -p $PORT -b $BAUD \
             --before default_reset --after hard_reset \
-            write_flash --flash_mode dio --flash_size 8MB --flash_freq 40m \
+            write_flash --flash_mode dio --flash_size detect --flash_freq 40m \
             $BOOT_OFFSET client/build-$TARGET/bootloader/bootloader.bin \
             0x8000 client/build-$TARGET/partition_table/partition-table.bin \
             0x10000 client/build-$TARGET/espmic_client.bin

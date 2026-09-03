@@ -5,7 +5,9 @@
 
 # --- Flash size (partition table needs >2 MB; use 8 MB, a common ESP32-S3
 # --- DevKitC default) ---
-CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+# 4 MB is the safe minimum; a 4 MB image header boots on both 4 MB and
+# 8 MB boards (a larger header on a smaller chip asserts at boot).
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
 # --- PSRAM (mode + speed are per-target; see sdkconfig.defaults.esp32s3/.esp32) ---
 CONFIG_SPIRAM=y
