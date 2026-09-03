@@ -33,7 +33,7 @@ extern "C" {
 #define BOARD_I2S_WS_GPIO   19
 
 /* I2S serial data-in (DIN) GPIO — boot default. Overridden by NVS / set_config. */
-#define BOARD_I2S_DIN_GPIO  24
+#define BOARD_I2S_DIN_GPIO  22
 
 #ifdef __cplusplus
 }
