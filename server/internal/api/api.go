@@ -21,9 +21,10 @@ const configTimeout = 5 * time.Second
 // Server is the dependency surface the API handlers need (spec §15-§16).
 type Server interface {
 	DeviceList() interface{}
+	StreamList() interface{}
 	MetricsSurface() interface{}
-	PushConfig(ctx context.Context, deviceID string, cfg control.SetConfig) (control.Message, error)
 	PCMBus() *audio.PCMBus
+	PushConfig(ctx context.Context, deviceID string, cfg control.SetConfig) (control.Message, error)
 }
 
 // Handlers holds the server reference and implements each §15 endpoint.
@@ -51,6 +52,7 @@ func RegisterRoutes(mux *http.ServeMux, cfg *config.Config, srv Server) {
 	mux.HandleFunc("POST /api/devices/{id}/config", h.handleConfig)
 	mux.HandleFunc("DELETE /api/streams/{id}", h.handleStopStream)
 	mux.HandleFunc("GET /api/streams/{id}", h.handleStream)
+	mux.HandleFunc("GET /api/streams", h.handleStreams)
 	mux.HandleFunc("GET /api/streams/{id}/stats", h.handleStreamStats)
 	mux.HandleFunc("GET /api/recordings/{id}", h.handleRecording)
 	mux.HandleFunc("GET /api/recordings/{id}/download", h.handleRecordingDownload)
@@ -175,6 +177,10 @@ func (h *Handlers) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"stream_id": id, "state": "unknown"})
+}
+
+func (h *Handlers) handleStreams(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, h.srv.StreamList())
 }
 
 func (h *Handlers) handleStreamStats(w http.ResponseWriter, r *http.Request) {

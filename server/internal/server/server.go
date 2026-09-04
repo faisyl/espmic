@@ -124,6 +124,11 @@ func (s *Server) DeviceList() interface{} {
 	return s.device.List()
 }
 
+// StreamList returns all active streams (§15).
+func (s *Server) StreamList() interface{} {
+	return s.stream.List()
+}
+
 // PushConfig sends a set_config command to a device's live control session and
 // awaits the correlated status/error reply (spec §10 set_config). It returns
 // control.ErrNotConnected if the device is offline.

@@ -22,9 +22,11 @@ type fakeSrv struct {
 	pushCfg  control.SetConfig
 	pushDev  string
 	pushCall bool
+	streams  interface{}
 }
 
 func (f *fakeSrv) DeviceList() interface{}     { return []string{"d1"} }
+func (f *fakeSrv) StreamList() interface{}     { return f.streams }
 func (f *fakeSrv) MetricsSurface() interface{} { return map[string]int{} }
 func (f *fakeSrv) PCMBus() *audio.PCMBus       { return audio.NewPCMBus() }
 func (f *fakeSrv) PushConfig(_ context.Context, deviceID string, cfg control.SetConfig) (control.Message, error) {
@@ -95,6 +97,36 @@ func TestMetrics(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/metrics = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+// TestStreams verifies GET /api/streams returns a JSON array of active stream
+// objects with the exact field names the dashboard reads (spec §15).
+func TestStreams(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, config.Load(), &fakeSrv{
+		streams: []map[string]any{
+			{"StreamID": "s1", "DeviceID": "d1", "State": "ACTIVE", "SSRC": 12345, "StartedAt": "2026-09-04T00:00:00Z"},
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/streams", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/streams = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var arr []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &arr); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(arr) != 1 {
+		t.Fatalf("len(arr) = %d, want 1", len(arr))
+	}
+	for _, key := range []string{"StreamID", "DeviceID", "State", "SSRC", "StartedAt"} {
+		if _, ok := arr[0][key]; !ok {
+			t.Fatalf("array element missing key %q; got %v", key, arr[0])
+		}
 	}
 }
 
