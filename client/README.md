@@ -212,10 +212,10 @@ configured endpoint:
 
 | Setting | Default | Configured via |
 |---|---|---|
-| `device_id` | `esp32-000` | `nvs_config.c` default / runtime `set_config` |
-| `server_host` | `audio.example.local` | `nvs_config.c` default / runtime `set_config` |
-| `server_port` | `4433` | `nvs_config.c` default / runtime `set_config` |
-| `control_tls_enabled` | `true` | `nvs_config.c` default / runtime `set_config` |
+| `device_id` | `esp32-<MAC>` (e.g. `esp32-a1b2c3`, unique per chip) | `board_config.h` prefix + eFuse MAC / runtime `set_config` |
+| `server_host` | `audio.example.local` | `board_config.h` / runtime `set_config` |
+| `server_port` | `4433` | `board_config.h` / runtime `set_config` |
+| `control_tls_enabled` | `true` | `board_config.h` / runtime `set_config` |
 
 > **Placeholder host gap:** The device ships pointing at the placeholder hostname
 > `audio.example.local:4433`. The runtime way to change it is the `set_config`
@@ -227,8 +227,8 @@ configured endpoint:
 >    (via your router's DNS, a local DNS server, or the operator's `/etc/hosts`).
 >    The device connects to the placeholder name, which now reaches your server;
 >    then use `set_config` to persist a real hostname.
-> 2. **Change compiled defaults** — edit `server_host` in
->    `client/components/nvs_config/nvs_config.c` before flashing.
+> 2. **Change compiled defaults** — edit the `BOARD_*` macros in
+>    `client/board_config.h` before flashing.
 >
 > There is no provisioning-time path to set the server endpoint.
 
@@ -265,7 +265,7 @@ state CONTROL_CONNECTING --CONTROL_CONNECTED--> IDLE
 
 ```sh
 curl http://localhost:8080/api/devices
-# -> [{"device_id":"esp32-000", ...}]
+# -> [{"device_id":"esp32-a1b2c3", ...}]
 ```
 
 ### 6. Re-provision / Factory Reset
