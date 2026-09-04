@@ -33,8 +33,8 @@ host-test:
 #   /root/.cache/Espressif  — component-manager download cache, so esp-opus is
 #                             never re-downloaded once fetched
 deps:
-    ARG TARGET=esp32s3
     FROM espressif/idf:release-v5.5
+    ARG TARGET=esp32s3
     WORKDIR /src
     ENV IDF_CCACHE_ENABLE=1
     CACHE /root/.cache/ccache

@@ -20,7 +20,7 @@ services:
       ESPMIC_RTP_WAIT_TIMEOUT_S: "5"
     ports:
       - "8080:8080"   # HTTP management API
-      - "9000:9000"   # control TLS/TCP
+      - "4433:9000"   # control TLS/TCP
     volumes:
       - espmic-data:/data
 
