@@ -40,8 +40,10 @@ extern "C" {
 /* I2S serial data-in (DIN) GPIO — boot default. Overridden by NVS / set_config. */
 #define BOARD_I2S_DIN_GPIO  22
 
-/* Device identity + server connection — boot defaults. Overridden by NVS / set_config. */
-#define BOARD_DEVICE_ID         "esp32-000"
+/* Device identity prefix — boot-default device_id is derived at runtime by
+ * appending a MAC-suffix (see nvs_config.c), e.g. "esp32-a1b2c3". This is a
+ * PREFIX, not the literal boot device_id. Overridden by NVS / set_config. */
+#define BOARD_DEVICE_ID         "esp32"
 #define BOARD_SERVER_HOST       "audio.example.local"
 #define BOARD_SERVER_PORT       4433
 #define BOARD_CONTROL_TLS_ENABLED true

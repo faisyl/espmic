@@ -8,6 +8,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 
 static const char *TAG = "nvs_config";
 
@@ -23,12 +24,25 @@ static const char *TAG = "nvs_config";
 
 /* Compiled-in defaults. All defaults come from board_config.h (single source
  * of truth at the top of the client tree); real boards override via NVS at
- * runtime (spec Section 16 NVS, Section 10 set_config). */
+ * runtime (spec Section 16 NVS, Section 10 set_config).
+ *
+ * device_id is derived at runtime from the chip's eFuse MAC (globally unique
+ * per chip) so every stock-flashed device gets a distinct ID without manual
+ * setup. Format: "<BOARD_DEVICE_ID>-<last 3 MAC bytes as hex>", e.g.
+ * "esp32-a1b2c3". The NVS override path (nvs_config_load) is untouched. */
 void nvs_config_defaults(device_config_t *cfg)
 {
     if (!cfg) return;
     memset(cfg, 0, sizeof(*cfg));
-    strncpy(cfg->device_id, BOARD_DEVICE_ID, sizeof(cfg->device_id) - 1);
+
+    uint8_t mac[6];
+    if (esp_efuse_mac_get_default(mac) == ESP_OK) {
+        snprintf(cfg->device_id, sizeof(cfg->device_id), "%s-%02x%02x%02x",
+                 BOARD_DEVICE_ID, mac[3], mac[4], mac[5]);
+    } else {
+        strncpy(cfg->device_id, BOARD_DEVICE_ID, sizeof(cfg->device_id) - 1);
+    }
+
     strncpy(cfg->server_host, BOARD_SERVER_HOST, sizeof(cfg->server_host) - 1);
     cfg->server_port         = BOARD_SERVER_PORT;
     cfg->control_tls_enabled = BOARD_CONTROL_TLS_ENABLED;
