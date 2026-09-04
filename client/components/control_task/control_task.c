@@ -124,9 +124,10 @@ static esp_err_t conn_open(conn_t *c)
             ESP_LOGI(TAG, "TLS: CA verification on%s",
                      s_server_cn[0] ? " + CN pinning" : "");
         } else {
-            /* LAN mode: no CA verification (acceptable only on a controlled LAN,
-             * spec Section 15). Provision an NVS "server_ca" to harden. */
-            tcfg.skip_common_name = true;
+             /* LAN mode: no CA verification (acceptable only on a controlled LAN,
+              * spec Section 15). Requires CONFIG_ESP_TLS_INSECURE=y (sdkconfig)
+              * so mbedtls does not reject the connection for missing verification source. */
+             tcfg.skip_common_name = true;
             ESP_LOGW(TAG, "TLS: no CA configured — LAN mode (unverified)");
         }
         tcfg.timeout_ms = 10000;

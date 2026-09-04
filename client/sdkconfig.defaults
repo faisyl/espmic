@@ -38,6 +38,11 @@ CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN=16384
 CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN=y
 CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
 CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
+# Allow the insecure (no-CA) TLS path for LAN mode. Without this, mbedtls
+# requires a verification source even when no CA is provisioned, which breaks
+# the documented "LAN mode (unverified)" default.
+CONFIG_ESP_TLS_INSECURE=y
+CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=y
 
 # --- Networking ---
 CONFIG_LWIP_MAX_SOCKETS=10
