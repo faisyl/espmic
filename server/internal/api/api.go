@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"espmic/server/internal/audio"
 	"espmic/server/internal/config"
 	"espmic/server/internal/control"
 )
@@ -22,6 +23,7 @@ type Server interface {
 	DeviceList() interface{}
 	MetricsSurface() interface{}
 	PushConfig(ctx context.Context, deviceID string, cfg control.SetConfig) (control.Message, error)
+	PCMBus() *audio.PCMBus
 }
 
 // Handlers holds the server reference and implements each §15 endpoint.

@@ -2,6 +2,7 @@ package audio
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"sync"
 
@@ -45,6 +46,18 @@ func NewLiveOutput(ctx context.Context, w http.ResponseWriter, r *http.Request, 
 	bus.Subscribe(l)
 	go l.writeLoop(ctx)
 	return l, nil
+}
+
+// HandleLive returns an http.HandlerFunc that upgrades to WebSocket and streams
+// decoded PCM from the bus (spec §14, GET /api/live).
+func HandleLive(bus *PCMBus) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, err := NewLiveOutput(r.Context(), w, r, bus)
+		if err != nil {
+			log.Printf("live: %v", err)
+			return
+		}
+	}
 }
 
 // OnPCM enqueues a frame for the WebSocket client (spec §14). Drops if the

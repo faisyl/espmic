@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"espmic/server/internal/audio"
 	"espmic/server/internal/config"
 	"espmic/server/internal/control"
 )
@@ -25,6 +26,7 @@ type fakeSrv struct {
 
 func (f *fakeSrv) DeviceList() interface{}     { return []string{"d1"} }
 func (f *fakeSrv) MetricsSurface() interface{} { return map[string]int{} }
+func (f *fakeSrv) PCMBus() *audio.PCMBus       { return audio.NewPCMBus() }
 func (f *fakeSrv) PushConfig(_ context.Context, deviceID string, cfg control.SetConfig) (control.Message, error) {
 	f.pushDev = deviceID
 	f.pushCfg = cfg

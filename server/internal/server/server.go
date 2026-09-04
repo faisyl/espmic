@@ -131,6 +131,9 @@ func (s *Server) PushConfig(ctx context.Context, deviceID string, cfg control.Se
 	return s.ctrl.SendSetConfig(ctx, deviceID, &cfg)
 }
 
+// PCMBus returns the decoded-audio bus for live output (spec §14).
+func (s *Server) PCMBus() *audio.PCMBus { return s.bus }
+
 func (s *Server) Close() error {
 	s.cancel()
 	if s.httpServer != nil {
