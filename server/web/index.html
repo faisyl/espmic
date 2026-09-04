@@ -1,17 +1,379 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>espmic dashboard</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 600px; margin: 2rem auto; color: #333; }
-    h1 { margin-bottom: 0.25rem; }
-    .status { color: #666; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>espmic — live monitor</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f8f9fa;--surface:#fff;--border:#dee2e6;--text:#212529;--muted:#6c757d;
+  --accent:#0d6efd;--green:#198754;--red:#dc3545;--amber:#ffc107;
+  --bar-bg:#e9ecef;--bar-ok:#198754;--bar-warn:#ffc107;--bar-peak:#dc3545;
+  --panel-shadow:0 1px 3px rgba(0,0,0,.08);--radius:8px;
+}
+@media(prefers-color-scheme:dark){
+  :root{
+    --bg:#1a1d21;--surface:#22262b;--border:#374151;--text:#e5e7eb;--muted:#9ca3af;
+    --accent:#3b82f6;--green:#22c55e;--red:#ef4444;--amber:#eab308;
+    --bar-bg:#374151;--bar-ok:#22c55e;--bar-warn:#eab308;--bar-peak:#ef4444;
+    --panel-shadow:0 1px 4px rgba(0,0,0,.3);
+  }
+}
+[data-theme="light"]{--bg:#f8f9fa;--surface:#fff;--border:#dee2e6;--text:#212529;--muted:#6c757d;--accent:#0d6efd;--green:#198754;--red:#dc3545;--amber:#ffc107;--bar-bg:#e9ecef;--bar-ok:#198754;--bar-warn:#ffc107;--bar-peak:#dc3545;--panel-shadow:0 1px 3px rgba(0,0,0,.08)}
+[data-theme="dark"]{--bg:#1a1d21;--surface:#22262b;--border:#374151;--text:#e5e7eb;--muted:#9ca3af;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--amber:#eab308;--bar-bg:#374151;--bar-ok:#22c55e;--bar-warn:#eab308;--bar-peak:#ef4444;--panel-shadow:0 1px 4px rgba(0,0,0,.3)}
+
+html{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:15px;line-height:1.5;color:var(--text);background:var(--bg)}
+body{padding:1rem;max-width:1200px;margin:0 auto}
+
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:.5rem}
+header h1{font-size:1.25rem;font-weight:600}
+.toolbar{display:flex;gap:.5rem;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:.35rem;padding:.35rem .75rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:.8rem;cursor:pointer;transition:background .15s}
+.btn:hover{background:var(--bar-bg)}
+.btn[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn svg{width:14px;height:14px;fill:currentColor}
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.status-dot.online{background:var(--green)}
+.status-dot.offline{background:var(--red)}
+.status-dot.connecting{background:var(--amber)}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+@media(max-width:768px){.grid{grid-template-columns:1fr}}
+
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--panel-shadow)}
+.panel h2{font-size:.85rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem}
+.panel h2 .badge{font-size:.7rem;font-weight:500;padding:.1rem .45rem;border-radius:9999px;background:var(--bar-bg);color:var(--muted)}
+
+.empty{text-align:center;padding:2rem 1rem;color:var(--muted);font-size:.85rem}
+.empty svg{width:32px;height:32px;fill:var(--border);margin-bottom:.5rem}
+
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th{text-align:left;font-weight:500;color:var(--muted);padding:.4rem .6rem;border-bottom:1px solid var(--border)}
+td{padding:.4rem .6rem;border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+.mono{font-family:'SF Mono',Consolas,'Liberation Mono',Menlo,monospace;font-size:.8rem}
+
+.metrics-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.6rem}
+.metric-card{padding:.6rem .75rem;background:var(--bar-bg);border-radius:6px}
+.metric-card .label{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.metric-card .value{font-size:1.1rem;font-weight:600;font-family:'SF Mono',Consolas,monospace;margin-top:.15rem}
+
+.meter-section{display:flex;flex-direction:column;gap:.75rem}
+.meter-row{display:flex;align-items:center;gap:.75rem}
+.meter-label{width:20px;font-size:.75rem;font-weight:600;color:var(--muted);text-align:right;flex-shrink:0}
+.meter-track{flex:1;height:20px;background:var(--bar-bg);border-radius:4px;overflow:hidden;position:relative}
+.meter-fill{height:100%;border-radius:4px;transition:width .08s linear,background .3s}
+.meter-peak{position:absolute;top:0;height:100%;width:2px;background:var(--bar-peak);transition:left .08s linear}
+.meter-db{width:55px;font-size:.75rem;font-family:'SF Mono',Consolas,monospace;color:var(--muted);text-align:right;flex-shrink:0}
+.meter-legend{display:flex;gap:1rem;font-size:.7rem;color:var(--muted);margin-top:.25rem}
+.meter-legend span::before{content:'';display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:.3rem;vertical-align:middle}
+.meter-legend .rms::before{background:var(--bar-ok)}
+.meter-legend .peak::before{background:var(--bar-peak)}
+
+.ws-status{display:flex;align-items:center;gap:.4rem;font-size:.75rem;color:var(--muted)}
+
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+</style>
 </head>
 <body>
-  <h1>espmic dashboard</h1>
-  <p class="status">loading&hellip;</p>
-</body>
+
+<header>
+  <h1>espmic <span style="font-weight:400;color:var(--muted)">live monitor</span></h1>
+  <div class="toolbar">
+    <div class="ws-status" aria-live="polite">
+      <span class="status-dot offline" id="ws-dot"></span>
+      <span id="ws-label">disconnected</span>
+    </div>
+    <button class="btn" id="theme-toggle" aria-label="Toggle theme" aria-pressed="auto">
+      <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8A9.046 9.046 0 0 0 12 3z"/></svg>
+    </button>
+    <button class="btn" id="refresh-btn" aria-label="Refresh data">
+      <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main class="grid" role="main">
+  <section class="panel" aria-labelledby="h-devices">
+    <h2 id="h-devices">Devices <span class="badge" id="device-count">0</span></h2>
+    <div id="devices-body">
+      <div class="empty" role="status"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg><br>No devices registered</div>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-streams">
+    <h2 id="h-streams">Streams <span class="badge" id="stream-count">0</span></h2>
+    <div id="streams-body">
+      <div class="empty" role="status"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg><br>No active streams</div>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-metrics" style="grid-column:1/-1">
+    <h2 id="h-metrics">Metrics</h2>
+    <div id="metrics-body">
+      <div class="empty" role="status">Loading metrics&hellip;</div>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-levels" style="grid-column:1/-1">
+    <h2 id="h-levels">Live Levels
+      <div class="meter-legend" style="margin-left:auto">
+        <span class="rms">RMS</span>
+        <span class="peak">Peak</span>
+      </div>
+    </h2>
+    <div id="levels-body" class="meter-section">
+      <div style="display:flex;gap:2rem;justify-content:center;padding:1rem 0">
+        <div style="text-align:center">
+          <div style="font-size:.75rem;color:var(--muted);margin-bottom:.5rem">Left</div>
+          <div class="meter-track" style="width:100%;height:28px" role="meter" aria-label="Left channel level" aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60">
+            <div class="meter-fill" id="meter-l-fill" style="width:0%;background:var(--bar-ok)"></div>
+            <div class="meter-peak" id="meter-l-peak" style="left:0%"></div>
+          </div>
+          <div class="meter-db" id="meter-l-db" style="margin-top:.25rem">-∞ dB</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:.75rem;color:var(--muted);margin-bottom:.5rem">Right</div>
+          <div class="meter-track" style="width:100%;height:28px" role="meter" aria-label="Right channel level" aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60">
+            <div class="meter-fill" id="meter-r-fill" style="width:0%;background:var(--bar-ok)"></div>
+            <div class="meter-peak" id="meter-r-peak" style="left:0%"></div>
+          </div>
+          <div class="meter-db" id="meter-r-db" style="margin-top:.25rem">-∞ dB</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function(){
+  "use strict";
+
+  var devices = [];
+  var pollTimer = null;
+  var ws = null;
+  var wsReconnectTimer = null;
+  var WS_RECONNECT_MS = 2000;
+  var POLL_INTERVAL_MS = 1500;
+  var METRIC_LABELS = {
+    rtp_packets_received:"RTP Pkts Received",rtp_packets_lost:"RTP Pkts Lost",
+    rtp_packets_duplicate:"RTP Dupes",rtp_packets_reordered:"RTP Reordered",
+    rtp_packets_late:"RTP Late",rtp_jitter_ms:"Jitter (ms)",
+    rtp_bitrate_bps:"Bitrate (bps)",opus_decode_errors:"Opus Errors",
+    pcm_frames_decoded:"PCM Frames",stream_discontinuities:"Discontinuities",
+    recording_bytes:"Recording Bytes",control_reconnects:"Ctrl Reconnects"
+  };
+
+  /* ---- theme ---- */
+  var html = document.documentElement;
+  var themeBtn = document.getElementById("theme-toggle");
+  function setTheme(t){html.setAttribute("data-theme",t);themeBtn.setAttribute("aria-pressed",t)}
+  function cycleTheme(){
+    var cur=html.getAttribute("data-theme")||"auto";
+    var next=cur==="auto"?"dark":cur==="dark"?"light":"auto";
+    if(next==="auto"){html.removeAttribute("data-theme");themeBtn.setAttribute("aria-pressed","auto")}
+    else setTheme(next);
+  }
+  if(window.matchMedia&&window.matchMedia("(prefers-color-scheme:dark)").matches) setTheme("dark");
+  themeBtn.addEventListener("click",cycleTheme);
+
+  /* ---- fetch helpers ---- */
+  function api(path){
+    return fetch(path).then(function(r){if(!r.ok)throw new Error(r.status);return r.json()});
+  }
+
+  /* ---- devices panel ---- */
+  function renderDevices(list){
+    devices=list||[];
+    var el=document.getElementById("devices-body");
+    var count=document.getElementById("device-count");
+    count.textContent=devices.length;
+    if(!devices.length){
+      el.innerHTML='<div class="empty" role="status"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg><br>No devices registered</div>';
+      return;
+    }
+    var h='<table role="table"><thead><tr><th scope="col">Device</th><th scope="col">Display Name</th><th scope="col">Status</th><th scope="col">Firmware</th></tr></thead><tbody>';
+    for(var i=0;i<devices.length;i++){
+      var d=devices[i];
+      var onl=typeof d.Status==="string"&&d.Status.toLowerCase()==="online";
+      h+='<tr><td class="mono">'+esc(d.DeviceID)+'</td><td>'+esc(d.DisplayName||"—")+'</td>';
+      h+='<td><span class="status-dot '+(onl?"online":"offline")+'" role="img" aria-label="'+(onl?"online":"offline")+'"></span> '+(onl?"Online":"Offline")+'</td>';
+      h+='<td class="mono">'+esc(d.Firmware||"—")+'</td></tr>';
+    }
+    h+='</tbody></table>';
+    el.innerHTML=h;
+  }
+
+  /* ---- streams panel ---- */
+  /* Go Stream struct emits PascalCase: StreamID, DeviceID, SSRC, State, StartedAt, Reason */
+  var streamListCache = [];
+  function renderStreams(){
+    var el=document.getElementById("streams-body");
+    var count=document.getElementById("stream-count");
+    count.textContent=streamListCache.length;
+    if(!streamListCache.length){
+      el.innerHTML='<div class="empty" role="status"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg><br>No active streams</div>';
+      return;
+    }
+    var h='<table role="table"><thead><tr><th scope="col">Stream</th><th scope="col">Device</th><th scope="col">State</th><th scope="col">SSRC</th><th scope="col">Started</th></tr></thead><tbody>';
+    for(var i=0;i<streamListCache.length;i++){
+      var s=streamListCache[i];
+      h+='<tr><td class="mono">'+esc(s.StreamID||"—")+'</td><td class="mono">'+esc(s.DeviceID||"—")+'</td>';
+      h+='<td>'+esc(s.State||"—")+'</td>';
+      h+='<td>'+fmt(s.SSRC)+'</td>';
+      h+='<td>'+(s.StartedAt?new Date(s.StartedAt).toLocaleTimeString():"—")+'</td></tr>';
+    }
+    h+='</tbody></table>';
+    el.innerHTML=h;
+  }
+
+  /* ---- metrics panel ---- */
+  function renderMetrics(m){
+    var el=document.getElementById("metrics-body");
+    var keys=Object.keys(m||{});
+    if(!keys.length){el.innerHTML='<div class="empty" role="status">No metrics data</div>';return;}
+    var h='<div class="metrics-grid">';
+    for(var i=0;i<keys.length;i++){
+      var k=keys[i];
+      var label=METRIC_LABELS[k]||k;
+      h+='<div class="metric-card"><div class="label">'+esc(label)+'</div><div class="value">'+fmt(m[k])+'</div></div>';
+    }
+    h+='</div>';
+    el.innerHTML=h;
+  }
+
+  /* ---- live level meters ---- */
+  var peakHoldL=0,peakHoldR=0;
+  var PEAK_DECAY_DB_PER_SEC=20;
+  var lastMeterTime=0;
+  var meterLFill=document.getElementById("meter-l-fill");
+  var meterRFill=document.getElementById("meter-r-fill");
+  var meterLPeak=document.getElementById("meter-l-peak");
+  var meterRPeak=document.getElementById("meter-r-peak");
+  var meterLDb=document.getElementById("meter-l-db");
+  var meterRDb=document.getElementById("meter-r-db");
+  var meterMinDB=-60;
+
+  function dbToPercent(db){
+    if(db<=meterMinDB) return 0;
+    return ((db-meterMinDB)/(0-meterMinDB))*100;
+  }
+  function meterColor(pct){
+    if(pct>95) return "var(--bar-peak)";
+    if(pct>75) return "var(--bar-warn)";
+    return "var(--bar-ok)";
+  }
+  function rmsToDB(rms){
+    if(rms<1) return meterMinDB;
+    return Math.max(meterMinDB,Math.min(0,20*Math.log10(rms/32768)));
+  }
+  function updateMeters(lRMS,rRMS,lPk,rPk){
+    var now=performance.now();
+    var dt=(now-lastMeterTime)/1000;
+    lastMeterTime=now;
+    var lDb=rmsToDB(lRMS);
+    var rDb=rmsToDB(rRMS);
+    var lPkDb=rmsToDB(lPk);
+    var rPkDb=rmsToDB(rPk);
+    if(lPkDb>peakHoldL) peakHoldL=lPkDb; else if(dt>0) peakHoldL=Math.max(lDb,peakHoldL-PEAK_DECAY_DB_PER_SEC*dt);
+    if(rPkDb>peakHoldR) peakHoldR=rPkDb; else if(dt>0) peakHoldR=Math.max(rDb,peakHoldR-PEAK_DECAY_DB_PER_SEC*dt);
+    var lPct=dbToPercent(lDb);
+    var rPct=dbToPercent(rDb);
+    meterLFill.style.width=lPct+"%";
+    meterLFill.style.background=meterColor(lPct);
+    meterRFill.style.width=rPct+"%";
+    meterRFill.style.background=meterColor(rPct);
+    meterLPeak.style.left=dbToPercent(peakHoldL)+"%";
+    meterRPeak.style.left=dbToPercent(peakHoldR)+"%";
+    meterLDb.textContent=lPct<=0?"-∞ dB":lDb.toFixed(1)+" dB";
+    meterRDb.textContent=rPct<=0?"-∞ dB":rDb.toFixed(1)+" dB";
+    meterLFill.parentElement.setAttribute("aria-valuenow",lDb.toFixed(1));
+    meterRFill.parentElement.setAttribute("aria-valuenow",rDb.toFixed(1));
+  }
+
+  function onPCM(buf){
+    if(!buf||buf.byteLength<4) return;
+    var int16=new Int16Array(buf);
+    var samplesPerChannel=int16.length/2;
+    var lSum=0,rSum=0,lPk=0,rPk=0;
+    for(var i=0;i<int16.length;i+=2){
+      var lv=int16[i];
+      var rv=int16[i+1];
+      lSum+=lv*lv;
+      rSum+=rv*rv;
+      var absL=Math.abs(lv);
+      var absR=Math.abs(rv);
+      if(absL>lPk) lPk=absL;
+      if(absR>rPk) rPk=absR;
+    }
+    updateMeters(Math.sqrt(lSum/samplesPerChannel),Math.sqrt(rSum/samplesPerChannel),lPk,rPk);
+  }
+
+  /* ---- WebSocket ---- */
+  var dot=document.getElementById("ws-dot");
+  var wlabel=document.getElementById("ws-label");
+  function wsConnect(){
+    if(ws) return;
+    var proto=location.protocol==="https:"?"wss:":"ws:";
+    var url=proto+"//"+location.host+"/api/live";
+    ws=new WebSocket(url);
+    ws.binaryType="arraybuffer";
+    ws.onopen=function(){
+      dot.className="status-dot online";
+      wlabel.textContent="connected";
+    };
+    ws.onmessage=function(ev){
+      if(ev.data instanceof ArrayBuffer){
+        onPCM(ev.data);
+      }
+    };
+    ws.onclose=function(){
+      dot.className="status-dot offline";
+      wlabel.textContent="disconnected";
+      ws=null;
+      wsReconnectTimer=setTimeout(wsConnect,WS_RECONNECT_MS);
+    };
+    ws.onerror=function(){
+      ws.close();
+    };
+  }
+
+  /* ---- polling ---- */
+  function poll(){
+    api("/api/devices").then(function(d){renderDevices(d)}).catch(function(){});
+    api("/api/metrics").then(function(m){renderMetrics(m)}).catch(function(){});
+    /* NIT-1: fetch all streams from GET /api/streams (array); degrade on 404 */
+    api("/api/streams").then(function(arr){
+      if(Array.isArray(arr)){
+        streamListCache=arr;
+        renderStreams();
+      } else {
+        streamListCache=[];
+        renderStreams();
+      }
+    }).catch(function(){});
+  }
+
+  function startPolling(){
+    poll();
+    pollTimer=setInterval(poll,POLL_INTERVAL_MS);
+  }
+
+  /* ---- refresh button ---- */
+  document.getElementById("refresh-btn").addEventListener("click",function(){
+    poll();
+    if(!ws) wsConnect();
+  });
+
+  /* ---- init ---- */
+  startPolling();
+  wsConnect();
+
+  /* ---- utils ---- */
+  function esc(s){var d=document.createElement("span");d.textContent=s;return d.innerHTML;}
+  function fmt(n){return n==null?"—":Number(n).toLocaleString();}
+})();
+</script>
+></body>
 </html>
