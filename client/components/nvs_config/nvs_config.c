@@ -21,18 +21,18 @@ static const char *TAG = "nvs_config";
 #define KEY_I2S_WS      "i2s_ws"
 #define KEY_I2S_DIN     "i2s_din"
 
-/* Compiled-in defaults. GPIO defaults come from board_config.h (single source
+/* Compiled-in defaults. All defaults come from board_config.h (single source
  * of truth at the top of the client tree); real boards override via NVS at
- * runtime (spec Section 5 notes GPIO is board-specific, Section 16 NVS). */
+ * runtime (spec Section 16 NVS, Section 10 set_config). */
 void nvs_config_defaults(device_config_t *cfg)
 {
     if (!cfg) return;
     memset(cfg, 0, sizeof(*cfg));
-    strncpy(cfg->device_id, "esp32-000", sizeof(cfg->device_id) - 1);
-    strncpy(cfg->server_host, "audio.example.local", sizeof(cfg->server_host) - 1);
-    cfg->server_port         = 4433;
-    cfg->control_tls_enabled = true;
-    cfg->default_bitrate     = 128000;
+    strncpy(cfg->device_id, BOARD_DEVICE_ID, sizeof(cfg->device_id) - 1);
+    strncpy(cfg->server_host, BOARD_SERVER_HOST, sizeof(cfg->server_host) - 1);
+    cfg->server_port         = BOARD_SERVER_PORT;
+    cfg->control_tls_enabled = BOARD_CONTROL_TLS_ENABLED;
+    cfg->default_bitrate     = BOARD_DEFAULT_BITRATE;
     cfg->i2s_bclk_gpio       = BOARD_I2S_BCLK_GPIO;
     cfg->i2s_ws_gpio         = BOARD_I2S_WS_GPIO;
     cfg->i2s_din_gpio        = BOARD_I2S_DIN_GPIO;
