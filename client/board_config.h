@@ -44,7 +44,7 @@ extern "C" {
  * appending a MAC-suffix (see nvs_config.c), e.g. "esp32-a1b2c3". This is a
  * PREFIX, not the literal boot device_id. Overridden by NVS / set_config. */
 #define BOARD_DEVICE_ID         "esp32"
-#define BOARD_SERVER_HOST       "audio.example.local"
+#define BOARD_SERVER_HOST       "ligntning.local"
 #define BOARD_SERVER_PORT       4433
 #define BOARD_CONTROL_TLS_ENABLED true
 #define BOARD_DEFAULT_BITRATE   128000
