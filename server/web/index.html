@@ -134,7 +134,7 @@ tr:last-child td{border-bottom:none}
       </div>
     </h2>
     <div id="levels-body" class="meter-section">
-      <div style="display:flex;gap:2rem;justify-content:center;padding:1rem 0">
+      <div style="display:flex;gap:2rem;justify-content:center;padding:1rem 0;flex-wrap:wrap;align-items:center">
         <div style="text-align:center">
           <div style="font-size:.75rem;color:var(--muted);margin-bottom:.5rem">Left</div>
           <div class="meter-track" style="width:100%;height:28px" role="meter" aria-label="Left channel level" aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60">
@@ -150,6 +150,19 @@ tr:last-child td{border-bottom:none}
             <div class="meter-peak" id="meter-r-peak" style="left:0%"></div>
           </div>
           <div class="meter-db" id="meter-r-db" style="margin-top:.25rem">-∞ dB</div>
+        </div>
+        <!-- Audio playback controls -->
+        <div style="display:flex;flex-direction:column;align-items:center;gap:.5rem;min-width:180px">
+          <button class="btn btn-primary" id="listen-btn" aria-label="Start audio playback" style="width:100%">
+            <svg viewBox="0 0 24 24" aria-hidden="true" style="width:14px;height:14px"><path d="M8 5v14l11-7z"/></svg>
+            <span id="listen-label">Listen</span>
+          </button>
+          <div style="display:flex;align-items:center;gap:.5rem;width:100%">
+            <button class="btn" id="mute-btn" aria-label="Mute" aria-pressed="false" style="flex:0 0 auto">
+              <svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+            </button>
+            <input type="range" id="volume-slider" min="0" max="100" value="80" step="1" style="flex:1" aria-label="Volume">
+          </div>
         </div>
       </div>
     </div>
@@ -351,6 +364,128 @@ tr:last-child td{border-bottom:none}
       if(absR>rPk) rPk=absR;
     }
     updateMeters(Math.sqrt(lSum/samplesPerChannel),Math.sqrt(rSum/samplesPerChannel),lPk,rPk);
+    // Feed audio worklet if playback is active
+    if(audioPort && int16.length){
+      audioPort.postMessage(int16);
+    }
+  }
+
+  /* ---- Audio playback (Web Audio + AudioWorklet) ---- */
+  var audioCtx=null;
+  var audioWorklet=null;
+  var audioPort=null;
+  var audioGain=null;
+  var audioMuted=false;
+  var audioVolume=0.8;
+  var playbackRing=null;
+  var RING_CAPACITY=8192; // ~170ms at 48kHz stereo
+  var RING_WRITE_IDX=0;
+  var RING_READ_IDX=0;
+
+  // AudioWorklet processor code (inline via Blob)
+  var workletCode=
+    "class PcmWorklet extends AudioWorkletProcessor {"+
+    "  constructor(){"+
+    "    super();"+
+    "    this.buffer=new Float32Array(4096);"+ // internal buffer
+    "    this.writeIdx=0;"+
+    "    this.readIdx=0;"+
+    "    this.port.onmessage=(e)=>{if(e.data instanceof Int16Array) this.push(e.data)};"+
+    "  }"+
+    "  push(int16){"+
+    "    var f32=new Float32Array(int16.length);"+
+    "    for(var i=0;i<int16.length;i++) f32[i]=int16[i]/32768;"+
+    "    var space=this.buffer.length-this.writeIdx+this.readIdx;"+
+    "    if(space<=0) space=this.buffer.length;"+
+    "    var len=Math.min(f32.length,space);"+
+    "    for(var i=0;i<len;i++){"+
+    "      this.buffer[this.writeIdx]=f32[i];"+
+    "      this.writeIdx=(this.writeIdx+1)%this.buffer.length;"+
+    "    }"+
+    "    // Drop excess if buffer full (overrun)"
+    "  }"+
+    "  process(inputs,outputs,params){"+
+    "    var outL=outputs[0][0];"+
+    "    var outR=outputs[0][1];"+
+    "    var frames=outL.length;"+
+    "    for(var i=0;i<frames;i++){"+
+    "      if(this.readIdx!==this.writeIdx){"+
+    "        outL[i]=this.buffer[this.readIdx];"+
+    "        this.readIdx=(this.readIdx+1)%this.buffer.length;"+
+    "        outR[i]=this.buffer[this.readIdx];"+
+    "        this.readIdx=(this.readIdx+1)%this.buffer.length;"+
+    "      }else{"+
+    "        outL[i]=0; outR[i]=0;"+ // underrun -> silence
+    "      }"+
+    "    }"+
+    "    return true;"+
+    "  }"+
+    "}"+
+    "registerProcessor('pcm-worklet',PcmWorklet);";
+
+  function initAudio(){
+    if(audioCtx) return;
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+    audioGain=audioCtx.createGain();
+    audioGain.gain.value=audioVolume;
+    audioGain.connect(audioCtx.destination);
+    // Create worklet from blob
+    var blob=new Blob([workletCode],{type:"application/javascript"});
+    var url=URL.createObjectURL(blob);
+    audioCtx.audioWorklet.addModule(url).then(function(){
+      audioWorklet=new AudioWorkletNode(audioCtx,"pcm-worklet",{
+        numberOfInputs:0,
+        numberOfOutputs:1,
+        outputChannelCount:[2]
+      });
+      audioWorklet.connect(audioGain);
+      audioPort=audioWorklet.port;
+    }).catch(function(e){
+      console.error("AudioWorklet load failed:",e);
+    });
+  }
+
+  function startPlayback(){
+    if(!audioCtx){
+      initAudio();
+    }
+    if(audioCtx.state==="suspended"){
+      audioCtx.resume();
+    }
+    audioMuted=false;
+    document.getElementById("mute-btn").setAttribute("aria-pressed","false");
+    document.getElementById("mute-btn").innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>';
+    document.getElementById("listen-btn").classList.remove("btn-primary");
+    document.getElementById("listen-btn").classList.add("btn-danger");
+    document.getElementById("listen-label").textContent="Stop";
+    document.getElementById("listen-btn").setAttribute("aria-label","Stop audio playback");
+  }
+
+  function stopPlayback(){
+    if(audioCtx && audioCtx.state!=="closed"){
+      audioCtx.suspend();
+    }
+    audioMuted=true;
+    document.getElementById("mute-btn").setAttribute("aria-pressed","true");
+    document.getElementById("mute-btn").innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3z"/></svg>';
+    document.getElementById("listen-btn").classList.remove("btn-danger");
+    document.getElementById("listen-btn").classList.add("btn-primary");
+    document.getElementById("listen-label").textContent="Listen";
+    document.getElementById("listen-btn").setAttribute("aria-label","Start audio playback");
+  }
+
+  function toggleMute(){
+    if(!audioGain) return;
+    audioMuted=!audioMuted;
+    audioGain.gain.value=audioMuted?0:audioVolume;
+    document.getElementById("mute-btn").setAttribute("aria-pressed",audioMuted?"true":"false");
+  }
+
+  function setVolume(v){
+    audioVolume=v;
+    if(audioGain && !audioMuted){
+      audioGain.gain.value=audioVolume;
+    }
   }
 
   /* ---- WebSocket ---- */
@@ -474,6 +609,19 @@ tr:last-child td{border-bottom:none}
   /* ---- init ---- */
   startPolling();
   wsConnect();
+
+  /* ---- audio playback controls ---- */
+  document.getElementById("listen-btn").addEventListener("click",function(){
+    if(audioCtx && audioCtx.state==="running"){
+      stopPlayback();
+    }else{
+      startPlayback();
+    }
+  });
+  document.getElementById("mute-btn").addEventListener("click",toggleMute);
+  document.getElementById("volume-slider").addEventListener("input",function(e){
+    setVolume(e.target.value/100);
+  });
 
   /* ---- utils ---- */
   function esc(s){var d=document.createElement("span");d.textContent=s;return d.innerHTML;}
