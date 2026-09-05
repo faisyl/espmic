@@ -9,6 +9,11 @@ set -eu
 : "${ESPMIC_TLS_KEY:=/data/certs/key.pem}"
 : "${ESPMIC_TLS_CN:=espmic.local}"
 
+# Export so the exec'd server sees the resolved paths even when they were
+# defaulted here (bare `docker run` with no env): image is TLS-by-default;
+# opt out explicitly with `-e ESPMIC_TLS_CERT= -e ESPMIC_TLS_KEY=`.
+export ESPMIC_TLS_CERT ESPMIC_TLS_KEY ESPMIC_TLS_CN
+
 if [ -n "$ESPMIC_TLS_CERT" ] && [ -n "$ESPMIC_TLS_KEY" ]; then
     if [ -f "$ESPMIC_TLS_CERT" ] && [ -f "$ESPMIC_TLS_KEY" ]; then
         echo "[entrypoint] TLS cert/key already present — skipping generation"
