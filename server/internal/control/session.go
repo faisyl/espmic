@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -75,6 +76,9 @@ func (s *Session) SetOnReady(h func(*Session)) { s.onReady = h }
 func (s *Session) Run(ctx context.Context) error {
 	defer s.conn.Close()
 
+	slog.Debug("control: connection opened", "remote", s.conn.RemoteAddr())
+	defer slog.Debug("control: connection closed", "remote", s.conn.RemoteAddr())
+
 	// Read hello with a bounded deadline (spec §7 step 2).
 	s.conn.SetReadDeadline(s.now().Add(10 * time.Second))
 	payload, err := s.readFrame()
@@ -92,12 +96,16 @@ func (s *Session) Run(ctx context.Context) error {
 		return errors.New("control: expected hello")
 	}
 
+	slog.Debug("control: hello received", "device_id", hello.DeviceID, "firmware", hello.Firmware, "capabilities", hello.Capabilities)
+
 	// Authenticate (spec §19).
 	if s.auth != nil {
 		if err := s.auth.Authenticate(ctx, hello.DeviceID, hello.Credential); err != nil {
+			slog.Debug("control: auth rejected", "device_id", hello.DeviceID, "err", err)
 			_ = s.writeMsg(NewError(1, "auth failed"))
 			return fmt.Errorf("control: authenticate: %w", err)
 		}
+		slog.Debug("control: auth accepted", "device_id", hello.DeviceID)
 	}
 
 	s.id = newSessionID()

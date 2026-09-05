@@ -10,9 +10,11 @@ import (
 	"context"
 	"io/fs"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,8 +31,13 @@ var commit = "none"
 var date = "unknown"
 
 func main() {
-	log.Printf("espmic-server version=%s commit=%s date=%s", version, commit, date)
+	// Initialize slog with configured log level before any other logging.
 	cfg := config.Load()
+	level := parseLogLevel(cfg.LogLevel)
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+	slog.SetDefault(slog.New(handler))
+
+	log.Printf("espmic-server version=%s commit=%s date=%s", version, commit, date)
 
 	srv, err := server.New(cfg)
 	if err != nil {
@@ -77,4 +84,15 @@ func main() {
 	_ = httpServer.Shutdown(shutdownCtx)
 	srv.Close()
 	log.Print("server stopped")
+}
+
+func parseLogLevel(s string) slog.Level {
+	switch strings.ToLower(s) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	default:
+		return slog.LevelInfo
+	}
 }

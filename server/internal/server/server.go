@@ -8,7 +8,9 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"database/sql"
+	"errors"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -120,12 +122,22 @@ func (s *Server) controlLoop(ln net.Listener) {
 		if err != nil {
 			return
 		}
+		slog.Debug("control: accepted connection", "remote", conn.RemoteAddr())
 		sess := control.NewSession(conn, s, time.Now, nil)
 		sess.SetOnMsg(s.ctrl.Handler())
 		sess.SetOnReady(s.ctrl.OnReady)
 		go func() {
 			defer s.ctrl.Unregister(sess.DeviceID())
-			_ = sess.Run(s.ctx)
+			if err := sess.Run(s.ctx); err != nil {
+				// Swallowed-error fix: log non-clean disconnects so auth/decode
+				// failures become visible (why the device peer-closed).
+				if !errors.Is(err, errors.New("")) &&
+					!errors.Is(err, &net.OpError{}) &&
+					err.Error() != "EOF" &&
+					err.Error() != "use of closed network connection" {
+					slog.Warn("control session ended", "remote", conn.RemoteAddr(), "err", err)
+				}
+			}
 		}()
 	}
 }

@@ -60,6 +60,7 @@ Configuration is loaded from environment variables with sensible local defaults 
 | `ESPMIC_TLS_CERT` | `""` | string | Path to PEM certificate for TLS control plane (empty = plain TCP) |
 | `ESPMIC_TLS_KEY` | `""` | string | Path to PEM private key for TLS control plane (empty = plain TCP) |
 | `ESPMIC_DEVICE_CREDENTIAL` | `""` | string | Shared secret for device enrollment. Empty = open enrollment (LAN default, TOFU). Non-empty = device must present this credential in hello message (constant-time compare). |
+| `ESPMIC_LOG_LEVEL` | `info` | string | Log verbosity: `info` (default) or `debug`. `debug` enables verbose control-plane tracing (accept, hello, auth, disconnect). Case-insensitive. |
 | `ESPMIC_JITTER_TARGET_MS` | `60` | int | Target playout delay for jitter buffer in milliseconds |
 | `ESPMIC_RTP_WAIT_TIMEOUT_S` | `5` | int | Timeout in seconds waiting for RTP packets post stream start |
 | `ESPMIC_DB_PATH` | `espmic.db` | string | Path to SQLite database file |

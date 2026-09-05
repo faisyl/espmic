@@ -24,6 +24,10 @@ type Config struct {
 	// accepted. Set via ESPMIC_DEVICE_CREDENTIAL (spec §19).
 	DeviceCredential string
 
+	// LogLevel controls server log verbosity. "info" (default) or "debug".
+	// Set via ESPMIC_LOG_LEVEL (case-insensitive).
+	LogLevel string
+
 	// JitterTargetMS is the target playout delay for the jitter buffer (spec §11).
 	JitterTargetMS int
 
@@ -37,14 +41,15 @@ type Config struct {
 // Load builds a Config from defaults overridden by environment variables.
 func Load() *Config {
 	return &Config{
-		HTTPAddr:            envStr("ESPMIC_HTTP_ADDR", ":8080"),
-		ControlAddr:         envStr("ESPMIC_CONTROL_ADDR", ":9000"),
-		TLSCertFile:         envStr("ESPMIC_TLS_CERT", ""),
-		TLSKeyFile:          envStr("ESPMIC_TLS_KEY", ""),
-		DeviceCredential:    envStr("ESPMIC_DEVICE_CREDENTIAL", ""),
-		JitterTargetMS:      envInt("ESPMIC_JITTER_TARGET_MS", 60),
-		RTPWaitTimeoutS:     envInt("ESPMIC_RTP_WAIT_TIMEOUT_S", 5),
-		DBPath:              envStr("ESPMIC_DB_PATH", "espmic.db"),
+		HTTPAddr:         envStr("ESPMIC_HTTP_ADDR", ":8080"),
+		ControlAddr:      envStr("ESPMIC_CONTROL_ADDR", ":9000"),
+		TLSCertFile:      envStr("ESPMIC_TLS_CERT", ""),
+		TLSKeyFile:       envStr("ESPMIC_TLS_KEY", ""),
+		DeviceCredential: envStr("ESPMIC_DEVICE_CREDENTIAL", ""),
+		LogLevel:         envStr("ESPMIC_LOG_LEVEL", "info"),
+		JitterTargetMS:   envInt("ESPMIC_JITTER_TARGET_MS", 60),
+		RTPWaitTimeoutS:  envInt("ESPMIC_RTP_WAIT_TIMEOUT_S", 5),
+		DBPath:           envStr("ESPMIC_DB_PATH", "espmic.db"),
 	}
 }
 
