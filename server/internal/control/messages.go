@@ -32,19 +32,28 @@ type Message interface {
 	Kind() string
 }
 
+// Capabilities models the device capability object sent in hello (spec §6, §7).
+// The client sends a structured object: {"sample_rates":[...],"channels":N,"codecs":[...],"psram":bool}.
+type Capabilities struct {
+	SampleRates []int    `json:"sample_rates,omitempty"`
+	Channels    int      `json:"channels,omitempty"`
+	Codecs      []string `json:"codecs,omitempty"`
+	PSRAM       bool     `json:"psram,omitempty"`
+}
+
 // Hello introduces a device on connection (device -> server). Credential is
 // the pre-shared secret/token the device presents; the server hashes it and
 // compares against the stored hash (spec §19). The exact auth scheme (PSK,
 // token, mTLS-derived) is pinned in S3; S2 uses a pre-shared credential.
 type Hello struct {
-	Type         string   `json:"type"`
-	DeviceID     string   `json:"device_id"`
-	Credential   string   `json:"credential,omitempty"`
-	Firmware     string   `json:"firmware,omitempty"`
-	Capabilities []string `json:"capabilities,omitempty"`
+	Type         string        `json:"type"`
+	DeviceID     string        `json:"device_id"`
+	Credential   string        `json:"credential,omitempty"`
+	Firmware     string        `json:"firmware,omitempty"`
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
 }
 
-func NewHello(deviceID, credential, firmware string, capabilities []string) *Hello {
+func NewHello(deviceID, credential, firmware string, capabilities *Capabilities) *Hello {
 	return &Hello{Type: TypeHello, DeviceID: deviceID, Credential: credential, Firmware: firmware, Capabilities: capabilities}
 }
 

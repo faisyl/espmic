@@ -139,7 +139,7 @@ func TestMessagesRoundtrip(t *testing.T) {
 		name string
 		msg  Message
 	}{
-		{"hello", NewHello("esp32-001", "secret", "1.2.3", []string{"opus"})},
+		{"hello", NewHello("esp32-001", "secret", "1.2.3", &Capabilities{Codecs: []string{"opus"}})},
 		{"hello_ack", NewHelloAck("sess-1", "esp32-001")},
 		{"ping", NewPing(5)},
 		{"pong", NewPong(5)},
@@ -215,5 +215,60 @@ func TestDecodePayloadUnknownType(t *testing.T) {
 func TestDecodePayloadMalformedJSON(t *testing.T) {
 	if _, err := DecodePayload([]byte(`{not json`)); err == nil {
 		t.Fatalf("expected error for malformed JSON")
+	}
+}
+
+func TestDecodeHelloWithCapabilitiesObject(t *testing.T) {
+	// Exact client hello JSON from spec (client/ESP32_Audio_Device_Specification.md line 237)
+	clientHello := `{"type":"hello","device_id":"esp32-001","credential":"token123","firmware":"v1.2.3","capabilities":{"sample_rates":[48000],"channels":2,"codecs":["opus"],"psram":true}}`
+	
+	msg, err := DecodePayload([]byte(clientHello))
+	if err != nil {
+		t.Fatalf("DecodePayload failed on real client hello: %v", err)
+	}
+	hello, ok := msg.(*Hello)
+	if !ok {
+		t.Fatalf("decoded type = %T, want *Hello", msg)
+	}
+	if hello.DeviceID != "esp32-001" {
+		t.Fatalf("device_id = %q, want esp32-001", hello.DeviceID)
+	}
+	if hello.Credential != "token123" {
+		t.Fatalf("credential = %q, want token123", hello.Credential)
+	}
+	if hello.Firmware != "v1.2.3" {
+		t.Fatalf("firmware = %q, want v1.2.3", hello.Firmware)
+	}
+	if hello.Capabilities == nil {
+		t.Fatal("capabilities should not be nil")
+	}
+	if len(hello.Capabilities.SampleRates) != 1 || hello.Capabilities.SampleRates[0] != 48000 {
+		t.Fatalf("sample_rates = %v, want [48000]", hello.Capabilities.SampleRates)
+	}
+	if hello.Capabilities.Channels != 2 {
+		t.Fatalf("channels = %d, want 2", hello.Capabilities.Channels)
+	}
+	if len(hello.Capabilities.Codecs) != 1 || hello.Capabilities.Codecs[0] != "opus" {
+		t.Fatalf("codecs = %v, want [opus]", hello.Capabilities.Codecs)
+	}
+	if !hello.Capabilities.PSRAM {
+		t.Fatalf("psram = %v, want true", hello.Capabilities.PSRAM)
+	}
+	
+	// Verify round-trip encode/decode
+	payload, err := Encode(hello)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	msg2, err := DecodePayload(payload)
+	if err != nil {
+		t.Fatalf("DecodePayload roundtrip: %v", err)
+	}
+	hello2, ok := msg2.(*Hello)
+	if !ok {
+		t.Fatalf("roundtrip type = %T, want *Hello", msg2)
+	}
+	if hello2.DeviceID != hello.DeviceID || hello2.Capabilities == nil {
+		t.Fatalf("roundtrip lost data")
 	}
 }
