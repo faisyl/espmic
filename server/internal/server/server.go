@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"log"
 	"net"
@@ -73,6 +74,11 @@ func New(cfg *config.Config) (*Server, error) {
 
 // Start begins the control listener and returns when ctx is cancelled or an
 // error occurs (spec §3). The HTTP API is owned by main.
+//
+// When cfg.TLSCertFile and cfg.TLSKeyFile are both set, the control listener
+// is wrapped in TLS; otherwise it remains plain TCP (spec §19). This lets the
+// same binary accept a real TLS handshake from an ESP32 device when certs are
+// configured, and continue to serve plain TCP (LAN-mode) when they are not.
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.cfg.ControlAddr)
 	if err != nil {
@@ -80,9 +86,22 @@ func (s *Server) Start() error {
 	}
 	s.controlLn = ln
 
+	mode := "plain TCP"
+	if s.cfg.TLSCertFile != "" && s.cfg.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(s.cfg.TLSCertFile, s.cfg.TLSKeyFile)
+		if err != nil {
+			_ = ln.Close()
+			return err
+		}
+		s.controlLn = tls.NewListener(ln, &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		})
+		mode = "TLS"
+	}
+
 	go func() {
-		log.Printf("control listening on %s", s.cfg.ControlAddr)
-		s.controlLoop(ln)
+		log.Printf("control listening on %s (%s)", s.cfg.ControlAddr, mode)
+		s.controlLoop(s.controlLn)
 	}()
 
 	ctx, stop := signal.NotifyContext(s.ctx, os.Interrupt, syscall.SIGTERM)
