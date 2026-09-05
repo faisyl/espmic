@@ -26,6 +26,7 @@ services:
       ESPMIC_DB_PATH: /data/espmic.db
       ESPMIC_JITTER_TARGET_MS: "60"
       ESPMIC_RTP_WAIT_TIMEOUT_S: "5"
+      ESPMIC_LOG_LEVEL: "debug"
     ports:
       - "8080:8080"   # HTTP management API
       - "4433:9000"   # control TLS/TCP
