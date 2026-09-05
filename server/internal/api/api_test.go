@@ -106,7 +106,7 @@ func TestStreams(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, config.Load(), &fakeSrv{
 		streams: []map[string]any{
-			{"StreamID": "s1", "DeviceID": "d1", "State": "ACTIVE", "SSRC": 12345, "StartedAt": "2026-09-04T00:00:00Z"},
+			{"StreamID": "s1", "DeviceID": "d1", "State": "ACTIVE", "SSRC": 12345, "StartedAt": "2026-09-04T00:00:00Z", "PacketsReceived": uint64(100), "PacketsLost": uint64(3), "JitterMS": 0.31},
 		},
 	})
 
@@ -123,7 +123,7 @@ func TestStreams(t *testing.T) {
 	if len(arr) != 1 {
 		t.Fatalf("len(arr) = %d, want 1", len(arr))
 	}
-	for _, key := range []string{"StreamID", "DeviceID", "State", "SSRC", "StartedAt"} {
+	for _, key := range []string{"StreamID", "DeviceID", "State", "SSRC", "StartedAt", "PacketsReceived", "PacketsLost", "JitterMS"} {
 		if _, ok := arr[0][key]; !ok {
 			t.Fatalf("array element missing key %q; got %v", key, arr[0])
 		}

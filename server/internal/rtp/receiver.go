@@ -85,6 +85,17 @@ func (r *Receiver) JitterBuffer(streamID string) (*JitterBuffer, bool) {
 	return b.jb, true
 }
 
+// StreamStats returns the per-stream RTP counters for streamID (received, lost, jitter).
+func (r *Receiver) StreamStats(streamID string) (Stats, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, ok := r.streams[streamID]
+	if !ok {
+		return Stats{}, false
+	}
+	return b.jb.Statistics(), true
+}
+
 // CloseStream tears down the UDP socket and goroutine for streamID.
 func (r *Receiver) CloseStream(streamID string) {
 	r.mu.Lock()

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -37,6 +38,7 @@ type Server struct {
 
 	httpServer *http.Server
 	controlLn  net.Listener
+	streamsMu  sync.RWMutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -119,14 +121,44 @@ func (s *Server) MetricsSurface() interface{} {
 	return s.metrics.Snapshot()
 }
 
+// StreamInfo is the per-stream view returned by GET /api/streams (spec §15).
+type StreamInfo struct {
+	StreamID        string  `json:"StreamID"`
+	DeviceID        string  `json:"DeviceID"`
+	SSRC            uint32  `json:"SSRC"`
+	State           string  `json:"State"`
+	StartedAt       string  `json:"StartedAt"`
+	PacketsReceived uint64  `json:"PacketsReceived"`
+	PacketsLost     uint64  `json:"PacketsLost"`
+	JitterMS        float64 `json:"JitterMS"`
+}
+
 // DeviceList returns registered devices (§15).
 func (s *Server) DeviceList() interface{} {
 	return s.device.List()
 }
 
-// StreamList returns all active streams (§15).
+// StreamList returns all active streams with per-stream RTP stats (§15).
 func (s *Server) StreamList() interface{} {
-	return s.stream.List()
+	s.streamsMu.RLock()
+	defer s.streamsMu.RUnlock()
+	out := make([]StreamInfo, 0, len(s.stream.List()))
+	for _, st := range s.stream.List() {
+		info := StreamInfo{
+			StreamID:  st.StreamID,
+			DeviceID:  st.DeviceID,
+			SSRC:      st.SSRC,
+			State:     string(st.State),
+			StartedAt: st.StartedAt.UTC().Format(time.RFC3339),
+		}
+		if stats, ok := s.rtp.StreamStats(st.StreamID); ok {
+			info.PacketsReceived = stats.Received
+			info.PacketsLost = stats.Lost
+			info.JitterMS = stats.JitterMS
+		}
+		out = append(out, info)
+	}
+	return out
 }
 
 // PushConfig sends a set_config command to a device's live control session and
