@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"errors"
+	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -131,10 +132,9 @@ func (s *Server) controlLoop(ln net.Listener) {
 			if err := sess.Run(s.ctx); err != nil {
 				// Swallowed-error fix: log non-clean disconnects so auth/decode
 				// failures become visible (why the device peer-closed).
-				if !errors.Is(err, errors.New("")) &&
-					!errors.Is(err, &net.OpError{}) &&
-					err.Error() != "EOF" &&
-					err.Error() != "use of closed network connection" {
+				if !errors.Is(err, io.EOF) &&
+					!errors.Is(err, net.ErrClosed) &&
+					!errors.Is(err, context.Canceled) {
 					slog.Warn("control session ended", "remote", conn.RemoteAddr(), "err", err)
 				}
 			}
@@ -144,10 +144,10 @@ func (s *Server) controlLoop(ln net.Listener) {
 
 // Authenticate implements control.Authenticator (spec §7, §19).
 // Trust-on-first-use (TOFU) enrollment with optional shared credential:
-// - If cfg.DeviceCredential is set, the presented credential must match it
-//   (constant-time compare). Mismatch => auth error.
-// - Then: if device exists, accept; if not, register it (TOFU) and accept.
-// - Log first-time enrollments.
+//   - If cfg.DeviceCredential is set, the presented credential must match it
+//     (constant-time compare). Mismatch => auth error.
+//   - Then: if device exists, accept; if not, register it (TOFU) and accept.
+//   - Log first-time enrollments.
 func (s *Server) Authenticate(ctx context.Context, deviceID, credential string) error {
 	if s.cfg.DeviceCredential != "" {
 		if subtle.ConstantTimeCompare([]byte(credential), []byte(s.cfg.DeviceCredential)) != 1 {
