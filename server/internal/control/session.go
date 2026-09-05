@@ -160,6 +160,11 @@ func (s *Session) readLoop(ctx context.Context, errCh chan<- error) {
 		if err != nil {
 			continue
 		}
+		// Auto-reply to Ping with Pong (keepalive, spec §7).
+		if ping, ok := msg.(*Ping); ok {
+			_ = s.writeMsg(NewPong(ping.Seq))
+			continue
+		}
 		if s.onMsg != nil {
 			s.onMsg(msg)
 		}

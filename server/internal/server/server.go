@@ -5,10 +5,12 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"crypto/tls"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -222,8 +224,132 @@ func (s *Server) PushConfig(ctx context.Context, deviceID string, cfg control.Se
 	return s.ctrl.SendSetConfig(ctx, deviceID, &cfg)
 }
 
+// StartStream creates a new stream, binds RTP port, registers it, sends
+// start_stream to the device, and awaits stream_started. On success, marks
+// stream ACTIVE and returns stream info. On failure, cleans up and returns error.
+func (s *Server) StartStream(ctx context.Context, deviceID string, purpose string) (map[string]any, error) {
+	// Verify device is connected
+	if _, err := s.device.Get(deviceID); err != nil {
+		return nil, fmt.Errorf("device not found: %w", err)
+	}
+
+	// Generate stream ID and SSRC
+	streamID := newStreamID()
+	ssrc := newSSRC()
+
+	// Bind RTP port
+	port, err := s.rtp.Bind(ctx, streamID, ssrc, 111) // PT 111 for Opus
+	if err != nil {
+		return nil, fmt.Errorf("bind RTP: %w", err)
+	}
+
+	// Create stream in CREATED state
+	st := stream.New(streamID, deviceID, ssrc, time.Now())
+	st.WithTimeoutConfig(stream.TimeoutConfig{
+		RTPWait:      time.Duration(s.cfg.RTPWaitTimeoutS) * time.Second,
+		RTPDisappear: 1 * time.Second,
+	})
+	s.stream.Add(st)
+
+	// Transition to WAITING_FOR_DEVICE -> STARTING
+	_ = st.Start(time.Now())
+	_ = st.DeviceCommandSent()
+
+	// Send start_stream to device
+	startReq := control.NewStartStream(streamID, ssrc, port)
+	startReq.DestinationHost = s.cfg.ControlAddr // use control addr host
+
+	msg, err := s.ctrl.SendStartStream(ctx, deviceID, startReq)
+	if err != nil {
+		// Cleanup on error
+		s.rtp.CloseStream(streamID)
+		s.stream.Remove(streamID)
+		return nil, fmt.Errorf("send start_stream: %w", err)
+	}
+
+	// Check reply
+	switch r := msg.(type) {
+	case *control.StreamStarted:
+		// Device accepted, transition to RTP_WAIT
+		_ = st.StreamStarted(time.Now())
+		return map[string]any{
+			"stream_id": streamID,
+			"ssrc":      ssrc,
+			"port":      port,
+			"state":     string(st.State),
+		}, nil
+	case *control.Error:
+		// Device rejected
+		_ = st.DeviceRejected(stream.FailureStartRejected)
+		s.rtp.CloseStream(streamID)
+		s.stream.Remove(streamID)
+		return nil, fmt.Errorf("device rejected start_stream: %s", r.Message)
+	default:
+		// Unexpected reply
+		_ = st.DeviceRejected(stream.FailureStartRejected)
+		s.rtp.CloseStream(streamID)
+		s.stream.Remove(streamID)
+		return nil, fmt.Errorf("unexpected reply type: %T", msg)
+	}
+}
+
+// StopStream sends stop_stream to the device, closes RTP, and marks stream COMPLETE.
+func (s *Server) StopStream(ctx context.Context, streamID string) error {
+	st, err := s.stream.Get(streamID)
+	if err != nil {
+		return err
+	}
+
+	// Must be ACTIVE to stop
+	if st.State != stream.StateActive {
+		return fmt.Errorf("stream %s not active (state=%s)", streamID, st.State)
+	}
+
+	_ = st.StopRequested()
+
+	// Send stop_stream to device
+	stopReq := control.NewStopStream(streamID)
+	msg, err := s.ctrl.SendStopStream(ctx, st.DeviceID, stopReq)
+	if err != nil {
+		// Still close RTP and mark stopped
+		s.rtp.CloseStream(streamID)
+		_ = st.Stopped()
+		return fmt.Errorf("send stop_stream: %w", err)
+	}
+
+	// Close RTP
+	s.rtp.CloseStream(streamID)
+
+	// Check reply
+	switch r := msg.(type) {
+	case *control.StreamStopped:
+		_ = st.Stopped()
+		return nil
+	case *control.Error:
+		_ = st.Stopped()
+		return fmt.Errorf("device error on stop: %s", r.Message)
+	default:
+		_ = st.Stopped()
+		return fmt.Errorf("unexpected reply type: %T", msg)
+	}
+}
+
 // PCMBus returns the decoded-audio bus for live output (spec §14).
 func (s *Server) PCMBus() *audio.PCMBus { return s.bus }
+
+// newStreamID generates a random stream ID.
+func newStreamID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("strm-%x", b[:])
+}
+
+// newSSRC generates a random SSRC.
+func newSSRC() uint32 {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+}
 
 func (s *Server) Close() error {
 	s.cancel()

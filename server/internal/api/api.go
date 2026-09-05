@@ -12,11 +12,12 @@ import (
 	"espmic/server/internal/audio"
 	"espmic/server/internal/config"
 	"espmic/server/internal/control"
+	"espmic/server/internal/stream"
 )
 
-// configTimeout bounds how long a device may take to echo a set_config reply
-// before the endpoint reports a timeout (504).
-const configTimeout = 5 * time.Second
+// streamTimeout bounds how long we wait for stream_started/stream_stopped
+// before reporting a timeout (504).
+const streamTimeout = 5 * time.Second
 
 // Server is the dependency surface the API handlers need (spec §15-§16).
 type Server interface {
@@ -25,6 +26,8 @@ type Server interface {
 	MetricsSurface() interface{}
 	PCMBus() *audio.PCMBus
 	PushConfig(ctx context.Context, deviceID string, cfg control.SetConfig) (control.Message, error)
+	StartStream(ctx context.Context, deviceID string, purpose string) (map[string]any, error)
+	StopStream(ctx context.Context, streamID string) error
 }
 
 // Handlers holds the server reference and implements each §15 endpoint.
@@ -105,12 +108,26 @@ func (h *Handlers) handleStartStream(w http.ResponseWriter, r *http.Request) {
 		Purpose string `json:"purpose"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	_ = req
 
-	writeJSON(w, http.StatusAccepted, map[string]string{
-		"stream_id": "placeholder-" + id,
-		"state":     "starting",
-	})
+	ctx, cancel := context.WithTimeout(r.Context(), streamTimeout)
+	defer cancel()
+
+	result, err := h.srv.StartStream(ctx, id, req.Purpose)
+	if err != nil {
+		switch {
+		case errors.Is(err, stream.ErrStreamNotFound), errors.Is(err, stream.ErrIllegalTransition):
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		case errors.Is(err, control.ErrNotConnected):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not connected"})
+		case errors.Is(err, context.DeadlineExceeded):
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "device did not respond to start_stream"})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
 // handleConfig pushes a set_config command to a connected device's live
@@ -141,7 +158,7 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), configTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), streamTimeout)
 	defer cancel()
 
 	msg, err := h.srv.PushConfig(ctx, id, req)
@@ -182,7 +199,28 @@ func (h *Handlers) handleStopStream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing id"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"stream_id": id, "state": "stopping"})
+
+	ctx, cancel := context.WithTimeout(r.Context(), streamTimeout)
+	defer cancel()
+
+	err := h.srv.StopStream(ctx, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, stream.ErrStreamNotFound):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		case errors.Is(err, stream.ErrIllegalTransition):
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		case errors.Is(err, control.ErrNotConnected):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not connected"})
+		case errors.Is(err, context.DeadlineExceeded):
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "device did not respond to stop_stream"})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"stream_id": id, "state": "stopped"})
 }
 
 func (h *Handlers) handleStream(w http.ResponseWriter, r *http.Request) {

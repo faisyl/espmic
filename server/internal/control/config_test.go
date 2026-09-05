@@ -345,3 +345,219 @@ func TestSessionManagerSendSetConfigTimeout(t *testing.T) {
 
 func intPtr(v int) *int       { return &v }
 func strPtr(v string) *string { return &v }
+
+// --- SessionManager stream start/stop ---
+
+func TestSessionManagerSendStartStreamSuccess(t *testing.T) {
+	mgr := NewSessionManager()
+	conn := newChanConn()
+	s := NewSession(conn, &fakeAuth{ok: true}, func() time.Time { return time.Now() }, nil)
+	s.SetOnMsg(mgr.Handler())
+	s.SetOnReady(mgr.OnReady)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+
+	// Hello -> hello_ack + onReady registers the session.
+	conn.deliver(t, NewHello("d1", "token", "1.0", nil))
+	conn.nextWrite(t, time.Second)
+
+	// Send start_stream through the manager and reply with stream_started.
+	req := NewStartStream("strm-01", 1234567, 5004)
+
+	replyCh := make(chan Message, 1)
+	go func() {
+		msg, err := mgr.SendStartStream(context.Background(), "d1", req)
+		if err != nil {
+			t.Errorf("SendStartStream: %v", err)
+			return
+		}
+		replyCh <- msg
+	}()
+
+	// The session should have written the start_stream frame.
+	got := conn.nextWrite(t, time.Second)
+	ss, ok := got.(*StartStream)
+	if !ok {
+		t.Fatalf("device received %T, want *StartStream", got)
+	}
+	if ss.StreamID != "strm-01" || ss.SSRC != 1234567 || ss.DestinationPort != 5004 {
+		t.Fatalf("unexpected start_stream: %+v", ss)
+	}
+
+	// Device replies with stream_started.
+	conn.deliver(t, NewStreamStarted("strm-01"))
+
+	select {
+	case msg := <-replyCh:
+		st, ok := msg.(*StreamStarted)
+		if !ok {
+			t.Fatalf("reply type = %T, want *StreamStarted", msg)
+		}
+		if st.StreamID != "strm-01" {
+			t.Fatalf("stream_id = %q, want strm-01", st.StreamID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for reply")
+	}
+	cancel()
+	<-done
+}
+
+func TestSessionManagerSendStartStreamRejected(t *testing.T) {
+	mgr := NewSessionManager()
+	conn := newChanConn()
+	s := NewSession(conn, &fakeAuth{ok: true}, func() time.Time { return time.Now() }, nil)
+	s.SetOnMsg(mgr.Handler())
+	s.SetOnReady(mgr.OnReady)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+
+	conn.deliver(t, NewHello("d1", "token", "1.0", nil))
+	conn.nextWrite(t, time.Second)
+
+	req := NewStartStream("strm-02", 1234567, 5004)
+
+	replyCh := make(chan Message, 1)
+	go func() {
+		msg, err := mgr.SendStartStream(context.Background(), "d1", req)
+		if err != nil {
+			t.Errorf("SendStartStream: %v", err)
+			return
+		}
+		replyCh <- msg
+	}()
+
+	conn.nextWrite(t, time.Second) // consume start_stream
+
+	// Device replies with an error.
+	conn.deliver(t, &Error{Type: TypeError, StreamID: "strm-02", Code: ErrorCode("busy"), Message: "device busy"})
+
+	select {
+	case msg := <-replyCh:
+		e, ok := msg.(*Error)
+		if !ok {
+			t.Fatalf("reply type = %T, want *Error", msg)
+		}
+		if e.StreamID != "strm-02" || e.Code != "busy" {
+			t.Fatalf("unexpected error: %+v", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for reply")
+	}
+	cancel()
+	<-done
+}
+
+func TestSessionManagerSendStopStreamSuccess(t *testing.T) {
+	mgr := NewSessionManager()
+	conn := newChanConn()
+	s := NewSession(conn, &fakeAuth{ok: true}, func() time.Time { return time.Now() }, nil)
+	s.SetOnMsg(mgr.Handler())
+	s.SetOnReady(mgr.OnReady)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+
+	conn.deliver(t, NewHello("d1", "token", "1.0", nil))
+	conn.nextWrite(t, time.Second)
+
+	req := NewStopStream("strm-03")
+
+	replyCh := make(chan Message, 1)
+	go func() {
+		msg, err := mgr.SendStopStream(context.Background(), "d1", req)
+		if err != nil {
+			t.Errorf("SendStopStream: %v", err)
+			return
+		}
+		replyCh <- msg
+	}()
+
+	got := conn.nextWrite(t, time.Second)
+	st, ok := got.(*StopStream)
+	if !ok {
+		t.Fatalf("device received %T, want *StopStream", got)
+	}
+	if st.StreamID != "strm-03" {
+		t.Fatalf("stream_id = %q, want strm-03", st.StreamID)
+	}
+
+	conn.deliver(t, NewStreamStopped("strm-03", nil))
+
+	select {
+	case msg := <-replyCh:
+		ss, ok := msg.(*StreamStopped)
+		if !ok {
+			t.Fatalf("reply type = %T, want *StreamStopped", msg)
+		}
+		if ss.StreamID != "strm-03" {
+			t.Fatalf("stream_id = %q, want strm-03", ss.StreamID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for reply")
+	}
+	cancel()
+	<-done
+}
+
+func TestSessionManagerSendStartStreamNotConnected(t *testing.T) {
+	mgr := NewSessionManager()
+	req := NewStartStream("strm-x", 123, 456)
+	_, err := mgr.SendStartStream(context.Background(), "offline-device", req)
+	if err == nil || err.Error() != "control: device not connected" {
+		t.Fatalf("expected ErrNotConnected, got %v", err)
+	}
+}
+
+func TestSessionManagerSendStopStreamNotConnected(t *testing.T) {
+	mgr := NewSessionManager()
+	req := NewStopStream("strm-x")
+	_, err := mgr.SendStopStream(context.Background(), "offline-device", req)
+	if err == nil || err.Error() != "control: device not connected" {
+		t.Fatalf("expected ErrNotConnected, got %v", err)
+	}
+}
+
+// --- Keepalive Ping/Pong ---
+
+func TestSessionManagerHandlerConsumesPingPong(t *testing.T) {
+	mgr := NewSessionManager()
+	conn := newChanConn()
+	s := NewSession(conn, &fakeAuth{ok: true}, func() time.Time { return time.Now() }, nil)
+	s.SetOnMsg(mgr.Handler())
+	s.SetOnReady(mgr.OnReady)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+
+	conn.deliver(t, NewHello("d1", "token", "1.0", nil))
+	conn.nextWrite(t, time.Second)
+
+	// Send a ping from device - should get pong back, not logged as unhandled.
+	conn.deliver(t, NewPing(42))
+	pong := conn.nextWrite(t, time.Second)
+	p, ok := pong.(*Pong)
+	if !ok {
+		t.Fatalf("expected *Pong, got %T", pong)
+	}
+	if p.Seq != 42 {
+		t.Fatalf("pong seq = %d, want 42", p.Seq)
+	}
+
+	// Send a pong from device - should be silently consumed (no reply expected).
+	conn.deliver(t, NewPong(43))
+	// No extra frames written - test passes if no panic.
+
+	cancel()
+	<-done
+}

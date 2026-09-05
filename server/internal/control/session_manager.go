@@ -15,11 +15,12 @@ var ErrNotConnected = errors.New("control: device not connected")
 // SessionManager tracks live control sessions by device id and correlates a
 // command's reply back to its awaiting caller. It mirrors the CommandService
 // Await/Deliver pattern but keys correlation by request_id (set_config echoes
-// it in the device's status/error reply) instead of stream_id.
+// it in the device's status/error reply) and stream_id (start/stop stream).
 type SessionManager struct {
 	mu       sync.Mutex
-	sessions map[string]*Session   // deviceID -> live session
+	sessions map[string]*Session     // deviceID -> live session
 	pending  map[string]chan Message // request_id -> reply channel
+	streamCh map[string]chan Message // stream_id -> reply channel (for start/stop)
 }
 
 // NewSessionManager returns an empty manager.
@@ -27,17 +28,27 @@ func NewSessionManager() *SessionManager {
 	return &SessionManager{
 		sessions: make(map[string]*Session),
 		pending:  make(map[string]chan Message),
+		streamCh: make(map[string]chan Message),
 	}
 }
 
 // Handler returns the inbound-message handler to pass to Session.SetOnMsg. It
-// routes status/error replies to awaiting set_config callers; any other
-// message type is logged at debug level for observability.
+// routes status/error replies to awaiting set_config callers; routes
+// StreamStarted/StreamStopped/Error to awaiting stream callers; silently
+// consumes Ping/Pong (keepalive); logs other unhandled types at debug.
 func (m *SessionManager) Handler() func(Message) {
 	return func(msg Message) {
-		if !m.deliverRequest(msg) {
-			log.Printf("session_mgr: unhandled inbound %s", msg.Kind())
+		if m.deliverRequest(msg) {
+			return
 		}
+		if m.deliverStream(msg) {
+			return
+		}
+		// Keepalive: silently consume Ping/Pong
+		if msg.Kind() == TypePing || msg.Kind() == TypePong {
+			return
+		}
+		log.Printf("session_mgr: unhandled inbound %s", msg.Kind())
 	}
 }
 
@@ -140,5 +151,113 @@ func requestIDOf(msg Message) string {
 		return m.RequestID
 	default:
 		return ""
+	}
+}
+
+// SendStartStream sends a start_stream command and awaits stream_started/error.
+func (m *SessionManager) SendStartStream(ctx context.Context, deviceID string, req *StartStream) (Message, error) {
+	if req == nil {
+		return nil, errors.New("control: nil start_stream")
+	}
+	if req.StreamID == "" {
+		return nil, errors.New("control: start_stream requires stream_id")
+	}
+	s, ok := m.session(deviceID)
+	if !ok {
+		return nil, ErrNotConnected
+	}
+
+	m.mu.Lock()
+	if _, dup := m.streamCh[req.StreamID]; dup {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("control: duplicate await for stream %q", req.StreamID)
+	}
+	ch := make(chan Message, 1)
+	m.streamCh[req.StreamID] = ch
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.streamCh, req.StreamID)
+		m.mu.Unlock()
+	}()
+
+	if err := s.Send(req); err != nil {
+		return nil, err
+	}
+
+	select {
+	case msg := <-ch:
+		return msg, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// SendStopStream sends a stop_stream command and awaits stream_stopped/error.
+func (m *SessionManager) SendStopStream(ctx context.Context, deviceID string, req *StopStream) (Message, error) {
+	if req == nil {
+		return nil, errors.New("control: nil stop_stream")
+	}
+	if req.StreamID == "" {
+		return nil, errors.New("control: stop_stream requires stream_id")
+	}
+	s, ok := m.session(deviceID)
+	if !ok {
+		return nil, ErrNotConnected
+	}
+
+	m.mu.Lock()
+	if _, dup := m.streamCh[req.StreamID]; dup {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("control: duplicate await for stream %q", req.StreamID)
+	}
+	ch := make(chan Message, 1)
+	m.streamCh[req.StreamID] = ch
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.streamCh, req.StreamID)
+		m.mu.Unlock()
+	}()
+
+	if err := s.Send(req); err != nil {
+		return nil, err
+	}
+
+	select {
+	case msg := <-ch:
+		return msg, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// deliverStream routes StreamStarted/StreamStopped/Error (with StreamID) to awaiting stream caller.
+func (m *SessionManager) deliverStream(msg Message) bool {
+	var sid string
+	switch m := msg.(type) {
+	case *StreamStarted:
+		sid = m.StreamID
+	case *StreamStopped:
+		sid = m.StreamID
+	case *Error:
+		sid = m.StreamID
+	default:
+		return false
+	}
+	if sid == "" {
+		return false
+	}
+	m.mu.Lock()
+	ch, ok := m.streamCh[sid]
+	m.mu.Unlock()
+	if !ok {
+		return false
+	}
+	select {
+	case ch <- msg:
+		return true
+	default:
+		return false
 	}
 }

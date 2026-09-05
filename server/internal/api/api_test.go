@@ -11,18 +11,24 @@ import (
 	"espmic/server/internal/audio"
 	"espmic/server/internal/config"
 	"espmic/server/internal/control"
+	streamPkg "espmic/server/internal/stream"
 )
 
 // fakeSrv is a minimal Server implementation for API tests (spec §15). Its
 // PushConfig behavior is programmable so handler tests can cover success,
 // rejection, offline, and timeout.
 type fakeSrv struct {
-	pushMsg  control.Message
-	pushErr  error
-	pushCfg  control.SetConfig
-	pushDev  string
-	pushCall bool
-	streams  interface{}
+	pushMsg    control.Message
+	pushErr    error
+	pushCfg    control.SetConfig
+	pushDev    string
+	pushCall   bool
+	streams    interface{}
+	startMsg   map[string]any
+	startErr   error
+	startCall  bool
+	stopErr    error
+	stopCall   bool
 }
 
 func (f *fakeSrv) DeviceList() interface{}     { return []string{"d1"} }
@@ -34,6 +40,14 @@ func (f *fakeSrv) PushConfig(_ context.Context, deviceID string, cfg control.Set
 	f.pushCfg = cfg
 	f.pushCall = true
 	return f.pushMsg, f.pushErr
+}
+func (f *fakeSrv) StartStream(_ context.Context, deviceID, purpose string) (map[string]any, error) {
+	f.startCall = true
+	return f.startMsg, f.startErr
+}
+func (f *fakeSrv) StopStream(_ context.Context, streamID string) error {
+	f.stopCall = true
+	return f.stopErr
 }
 
 // TestHealth verifies the S0 health endpoint (spec §15).
@@ -278,5 +292,149 @@ func TestConfigEndpointPartialFields(t *testing.T) {
 	}
 	if srv.pushCfg.I2SDin == nil || *srv.pushCfg.I2SDin != 14 {
 		t.Fatalf("i2s_din not forwarded: %+v", srv.pushCfg.I2SDin)
+	}
+}
+
+// TestStartStreamEndpoint exercises POST /api/devices/{id}/stream.
+func TestStartStreamEndpoint(t *testing.T) {
+	cases := []struct {
+		name      string
+		deviceID  string
+		body      string
+		startMsg  map[string]any
+		startErr  error
+		wantCode  int
+		wantBody  string
+	}{
+		{
+			name:     "success returns stream info",
+			deviceID: "d1",
+			body:     `{"purpose":"test"}`,
+			startMsg: map[string]any{"stream_id": "strm-abc", "ssrc": 12345, "port": 5004, "state": "RTP_WAIT"},
+			wantCode: http.StatusOK,
+			wantBody: `"stream_id":"strm-abc"`,
+		},
+		{
+			name:     "device not connected maps to 404",
+			deviceID: "d1",
+			body:     `{"purpose":"test"}`,
+			startErr: control.ErrNotConnected,
+			wantCode: http.StatusNotFound,
+			wantBody: `device not connected`,
+		},
+		{
+			name:     "device timeout maps to 504",
+			deviceID: "d1",
+			body:     `{"purpose":"test"}`,
+			startErr: context.DeadlineExceeded,
+			wantCode: http.StatusGatewayTimeout,
+			wantBody: `device did not respond`,
+		},
+		{
+			name:     "conflict maps to 409",
+			deviceID: "d1",
+			body:     `{"purpose":"test"}`,
+			startErr: streamPkg.ErrIllegalTransition,
+			wantCode: http.StatusConflict,
+			wantBody: `illegal lifecycle transition`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &fakeSrv{startMsg: tc.startMsg, startErr: tc.startErr}
+			mux := http.NewServeMux()
+			RegisterRoutes(mux, config.Load(), srv)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/devices/"+tc.deviceID+"/stream", bytes.NewBufferString(tc.body))
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if tc.wantBody != "" {
+				if !bytes.Contains(rec.Body.Bytes(), []byte(tc.wantBody)) {
+					t.Fatalf("body %q missing %q", rec.Body.String(), tc.wantBody)
+				}
+			}
+			if tc.wantCode == http.StatusOK {
+				if !srv.startCall {
+					t.Fatal("expected StartStream to be called")
+				}
+			}
+		})
+	}
+}
+
+// TestStopStreamEndpoint exercises DELETE /api/streams/{id}.
+func TestStopStreamEndpoint(t *testing.T) {
+	cases := []struct {
+		name      string
+		streamID  string
+		stopErr   error
+		wantCode  int
+		wantBody  string
+	}{
+		{
+			name:     "success returns stopped",
+			streamID: "strm-1",
+			wantCode: http.StatusOK,
+			wantBody: `"state":"stopped"`,
+		},
+		{
+			name:     "stream not found maps to 404",
+			streamID: "strm-1",
+			stopErr:  streamPkg.ErrStreamNotFound,
+			wantCode: http.StatusNotFound,
+			wantBody: `unknown stream`,
+		},
+		{
+			name:     "illegal transition maps to 409",
+			streamID: "strm-1",
+			stopErr:  streamPkg.ErrIllegalTransition,
+			wantCode: http.StatusConflict,
+			wantBody: `illegal lifecycle transition`,
+		},
+		{
+			name:     "device timeout maps to 504",
+			streamID: "strm-1",
+			stopErr:  context.DeadlineExceeded,
+			wantCode: http.StatusGatewayTimeout,
+			wantBody: `device did not respond`,
+		},
+		{
+			name:     "device not connected maps to 404",
+			streamID: "strm-1",
+			stopErr:  control.ErrNotConnected,
+			wantCode: http.StatusNotFound,
+			wantBody: `device not connected`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &fakeSrv{stopErr: tc.stopErr}
+			mux := http.NewServeMux()
+			RegisterRoutes(mux, config.Load(), srv)
+
+			req := httptest.NewRequest(http.MethodDelete, "/api/streams/"+tc.streamID, nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if tc.wantBody != "" {
+				if !bytes.Contains(rec.Body.Bytes(), []byte(tc.wantBody)) {
+					t.Fatalf("body %q missing %q", rec.Body.String(), tc.wantBody)
+				}
+			}
+			if tc.wantCode == http.StatusOK {
+				if !srv.stopCall {
+					t.Fatal("expected StopStream to be called")
+				}
+			}
+		})
 	}
 }
