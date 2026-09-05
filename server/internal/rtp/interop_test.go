@@ -94,7 +94,7 @@ func TestInteropNoLeak100Streams(t *testing.T) {
 	seen := make(map[uint16]bool)
 	for i := 0; i < 100; i++ {
 		streamID := "stream-" + strconv.Itoa(i)
-		port, err := r.Bind(context.Background(), streamID, uint32(i+1), DefaultPayloadType)
+		port, err := r.Bind(context.Background(), streamID, DefaultPayloadType)
 		if err != nil {
 			t.Fatalf("bind %s: %v", streamID, err)
 		}
@@ -131,11 +131,11 @@ func TestInteropNoLeak100Streams(t *testing.T) {
 // SSRC/session state do not interfere.
 func TestInteropTwoDevices(t *testing.T) {
 	r := NewReceiver(metrics.New())
-	_, err := r.Bind(context.Background(), "s1", 0xAAAA, DefaultPayloadType)
+	_, err := r.Bind(context.Background(), "s1", DefaultPayloadType)
 	if err != nil {
 		t.Fatalf("bind s1: %v", err)
 	}
-	_, err = r.Bind(context.Background(), "s2", 0xBBBB, DefaultPayloadType)
+	_, err = r.Bind(context.Background(), "s2", DefaultPayloadType)
 	if err != nil {
 		t.Fatalf("bind s2: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestInteropTwoDevices(t *testing.T) {
 // the receiver.
 func TestInteropMalformedNoCrash(t *testing.T) {
 	r := NewReceiver(metrics.New())
-	port, err := r.Bind(context.Background(), "s1", 1, DefaultPayloadType)
+	port, err := r.Bind(context.Background(), "s1", DefaultPayloadType)
 	if err != nil {
 		t.Fatalf("bind: %v", err)
 	}

@@ -28,6 +28,7 @@ type Receiver struct {
 type streamBinding struct {
 	streamID     string
 	ssrc         uint32
+	ssrcLearned  bool
 	pt           uint16
 	port         uint16
 	pc           net.PacketConn
@@ -51,10 +52,9 @@ func NewReceiver(m *metrics.Metrics) *Receiver {
 }
 
 // Bind allocates a UDP port for streamID and starts a read goroutine
-// (spec §9: one UDP port per active stream). ssrc is a uint32 (the RTP SSRC
-// field width); pt is uint8 (the RTP payload type field width). Both are
-// validated on every packet (spec §19).
-func (r *Receiver) Bind(ctx context.Context, streamID string, ssrc uint32, pt uint8) (uint16, error) {
+// (spec §9: one UDP port per active stream). pt is uint8 (the RTP payload
+// type field width). Both are validated on every packet (spec §19).
+func (r *Receiver) Bind(ctx context.Context, streamID string, pt uint8) (uint16, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.streams[streamID]; ok {
@@ -67,13 +67,14 @@ func (r *Receiver) Bind(ctx context.Context, streamID string, ssrc uint32, pt ui
 	port := uint16(pc.LocalAddr().(*net.UDPAddr).Port)
 	ctx, cancel := context.WithCancel(ctx)
 	b := &streamBinding{
-		streamID: streamID,
-		ssrc:     ssrc,
-		pt:       uint16(pt),
-		port:     port,
-		pc:       pc,
-		jb:       New(60 * time.Millisecond),
-		cancel:   cancel,
+		streamID:    streamID,
+		ssrc:        0,
+		ssrcLearned: false,
+		pt:          uint16(pt),
+		port:        port,
+		pc:          pc,
+		jb:          New(60 * time.Millisecond),
+		cancel:      cancel,
 	}
 	r.streams[streamID] = b
 	go r.readLoop(ctx, b)
@@ -148,6 +149,8 @@ func (r *Receiver) streamCount() int {
 
 // readLoop reads packets, validates SSRC/PT, and pushes into the jitter
 // buffer. Unsolicited packets are dropped (spec §19).
+// SSRC is learned from the first VALID packet (correct PT + parseable RTP)
+// and then enforced for the stream lifetime (spec §8: device-chosen SSRC).
 func (r *Receiver) readLoop(ctx context.Context, b *streamBinding) {
 	buf := make([]byte, 2048)
 	for {
@@ -171,8 +174,19 @@ func (r *Receiver) readLoop(ctx context.Context, b *streamBinding) {
 			}
 			continue
 		}
-		if p.SSRC != b.ssrc {
-			// spec §19: ignore unsolicited
+
+		// Learn SSRC from first VALID packet (correct PT + parseable RTP).
+		// Guard with receiver lock to avoid data race on ssrc/ssrcLearned.
+		r.mu.Lock()
+		if !b.ssrcLearned {
+			b.ssrc = p.SSRC
+			b.ssrcLearned = true
+		}
+		expectedSSRC := b.ssrc
+		r.mu.Unlock()
+
+		if p.SSRC != expectedSSRC {
+			// spec §19: ignore unsolicited / foreign SSRC
 			continue
 		}
 		b.jb.Push(p, r.now())

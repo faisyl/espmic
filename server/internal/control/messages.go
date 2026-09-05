@@ -120,18 +120,16 @@ type StartStream struct {
 	Type        string      `json:"type"`
 	RequestID   string      `json:"request_id"`
 	StreamID    string      `json:"stream_id"`
-	SSRC        uint32      `json:"ssrc"`
 	Destination Destination `json:"destination"`
 	Codec       Codec       `json:"codec"`
 	RTP         RTPConfig   `json:"rtp"`
 }
 
-func NewStartStream(requestID, streamID string, ssrc uint32, dest Destination, codec Codec, rtp RTPConfig) *StartStream {
+func NewStartStream(requestID, streamID string, dest Destination, codec Codec, rtp RTPConfig) *StartStream {
 	return &StartStream{
 		Type:        TypeStartStream,
 		RequestID:   requestID,
 		StreamID:    streamID,
-		SSRC:        ssrc,
 		Destination: dest,
 		Codec:       codec,
 		RTP:         rtp,

@@ -21,23 +21,20 @@ func NewCommandService() *CommandService {
 }
 
 // ValidateStart checks a start_stream request is well-formed (spec §9).
-func (s *CommandService) ValidateStart(streamID, deviceID string, ssrc uint32) error {
+func (s *CommandService) ValidateStart(streamID, deviceID string) error {
 	if streamID == "" {
 		return errors.New("control: start_stream requires stream_id")
 	}
 	if deviceID == "" {
 		return errors.New("control: start_stream requires device_id")
 	}
-	if ssrc == 0 {
-		return errors.New("control: start_stream requires non-zero ssrc")
-	}
 	return nil
 }
 
 // BuildStartStream constructs a start_stream command (spec §9, §11). The server
 // allocates the destination port internally and fills in the full spec schema.
-func (s *CommandService) BuildStartStream(requestID, streamID string, ssrc uint32, destIP string, destPort uint16) *StartStream {
-	return NewStartStream(requestID, streamID, ssrc,
+func (s *CommandService) BuildStartStream(requestID, streamID string, destIP string, destPort uint16) *StartStream {
+	return NewStartStream(requestID, streamID,
 		Destination{IP: destIP, Port: destPort},
 		Codec{Name: "opus", SampleRate: 48000, Channels: 2, FrameMS: 20, Bitrate: 128000, VBR: true, FEC: false, DTX: false},
 		RTPConfig{PayloadType: 111})

@@ -233,19 +233,19 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 		return nil, fmt.Errorf("device not found: %w", err)
 	}
 
-	// Generate stream ID and SSRC
+	// Generate stream ID (SSRC is device-chosen, learned by the RTP receiver per spec §8)
 	streamID := newStreamID()
-	ssrc := newSSRC()
 	requestID := newRequestID()
 
 	// Bind RTP port
-	port, err := s.rtp.Bind(ctx, streamID, ssrc, 111) // PT 111 for Opus
+	port, err := s.rtp.Bind(ctx, streamID, rtp.DefaultPayloadType)
 	if err != nil {
 		return nil, fmt.Errorf("bind RTP: %w", err)
 	}
 
 	// Create stream in CREATED state
-	st := stream.New(streamID, deviceID, ssrc, time.Now())
+	// SSRC is 0 at creation; the device chooses it and the receiver learns it from the first RTP packet (spec §8).
+	st := stream.New(streamID, deviceID, 0, time.Now())
 	st.WithTimeoutConfig(stream.TimeoutConfig{
 		RTPWait:      time.Duration(s.cfg.RTPWaitTimeoutS) * time.Second,
 		RTPDisappear: 1 * time.Second,
@@ -279,9 +279,9 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 		FEC:        false,
 		DTX:        false,
 	}
-	rtpCfg := control.RTPConfig{PayloadType: 111}
+	rtpCfg := control.RTPConfig{PayloadType: rtp.DefaultPayloadType}
 
-	startReq := control.NewStartStream(requestID, streamID, ssrc, dest, codec, rtpCfg)
+	startReq := control.NewStartStream(requestID, streamID, dest, codec, rtpCfg)
 
 	msg, err := s.ctrl.SendStartStream(ctx, deviceID, startReq)
 	if err != nil {
@@ -326,7 +326,6 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 
 		return map[string]any{
 			"stream_id": streamID,
-			"ssrc":      ssrc,
 			"port":      port,
 			"state":     string(st.State()),
 		}, nil
@@ -395,13 +394,6 @@ func newStreamID() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	return fmt.Sprintf("strm-%x", b[:])
-}
-
-// newSSRC generates a random SSRC.
-func newSSRC() uint32 {
-	var b [4]byte
-	_, _ = rand.Read(b[:])
-	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
 }
 
 // newRequestID generates a random request ID for correlation.

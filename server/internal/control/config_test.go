@@ -365,7 +365,7 @@ func TestSessionManagerSendStartStreamSuccess(t *testing.T) {
 	conn.nextWrite(t, time.Second)
 
 	// Send start_stream through the manager and reply with stream_started.
-	req := NewStartStream("req-1", "strm-01", 1234567,
+	req := NewStartStream("req-1", "strm-01",
 		Destination{IP: "192.168.1.100", Port: 5004},
 		Codec{Name: "opus", SampleRate: 48000, Channels: 2, FrameMS: 20, Bitrate: 128000, VBR: true, FEC: false, DTX: false},
 		RTPConfig{PayloadType: 111})
@@ -386,7 +386,7 @@ func TestSessionManagerSendStartStreamSuccess(t *testing.T) {
 	if !ok {
 		t.Fatalf("device received %T, want *StartStream", got)
 	}
-	if ss.StreamID != "strm-01" || ss.SSRC != 1234567 || ss.Destination.Port != 5004 || ss.RequestID != "req-1" {
+	if ss.StreamID != "strm-01" || ss.Destination.Port != 5004 || ss.RequestID != "req-1" {
 		t.Fatalf("unexpected start_stream: %+v", ss)
 	}
 
@@ -424,7 +424,7 @@ func TestSessionManagerSendStartStreamRejected(t *testing.T) {
 	conn.deliver(t, NewHello("d1", "token", "1.0", nil))
 	conn.nextWrite(t, time.Second)
 
-	req := NewStartStream("req-2", "strm-02", 1234567,
+	req := NewStartStream("req-2", "strm-02",
 		Destination{IP: "192.168.1.100", Port: 5004},
 		Codec{Name: "opus", SampleRate: 48000, Channels: 2, FrameMS: 20, Bitrate: 128000, VBR: true, FEC: false, DTX: false},
 		RTPConfig{PayloadType: 111})
@@ -516,7 +516,7 @@ func TestSessionManagerSendStopStreamSuccess(t *testing.T) {
 
 func TestSessionManagerSendStartStreamNotConnected(t *testing.T) {
 	mgr := NewSessionManager()
-	req := NewStartStream("req-x", "strm-x", 123,
+	req := NewStartStream("req-x", "strm-x",
 		Destination{IP: "192.168.1.100", Port: 456},
 		Codec{Name: "opus", SampleRate: 48000, Channels: 2, FrameMS: 20, Bitrate: 128000, VBR: true, FEC: false, DTX: false},
 		RTPConfig{PayloadType: 111})

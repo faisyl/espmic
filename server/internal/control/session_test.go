@@ -217,24 +217,21 @@ func TestSessionReceivesStatus(t *testing.T) {
 
 func TestCommandServiceValidate(t *testing.T) {
 	cs := NewCommandService()
-	if err := cs.ValidateStart("", "d1", 1); err == nil {
+	if err := cs.ValidateStart("", "d1"); err == nil {
 		t.Fatal("empty stream_id should fail")
 	}
-	if err := cs.ValidateStart("s1", "", 1); err == nil {
+	if err := cs.ValidateStart("s1", ""); err == nil {
 		t.Fatal("empty device_id should fail")
 	}
-	if err := cs.ValidateStart("s1", "d1", 0); err == nil {
-		t.Fatal("zero ssrc should fail")
-	}
-	if err := cs.ValidateStart("s1", "d1", 42); err != nil {
+	if err := cs.ValidateStart("s1", "d1"); err != nil {
 		t.Fatalf("valid start: %v", err)
 	}
 }
 
 func TestCommandServiceBuildCommands(t *testing.T) {
 	cs := NewCommandService()
-	ss := cs.BuildStartStream("req-1", "s1", 42, "127.0.0.1", 5004)
-	if ss.StreamID != "s1" || ss.SSRC != 42 || ss.Destination.Port != 5004 {
+	ss := cs.BuildStartStream("req-1", "s1", "127.0.0.1", 5004)
+	if ss.StreamID != "s1" || ss.Destination.Port != 5004 {
 		t.Fatalf("start_stream: %+v", ss)
 	}
 	st := cs.BuildStopStream("req-1", "s1")

@@ -209,7 +209,7 @@ func TestAudioPipelineEndToEnd(t *testing.T) {
 	// Bind RTP directly (bypass control handshake per god refinement #2)
 	streamID := "test-stream"
 	ssrc := uint32(0x12345678)
-	_, err = srv.rtp.Bind(ctx, streamID, ssrc, 111)
+	_, err = srv.rtp.Bind(ctx, streamID, 111)
 	if err != nil {
 		t.Fatalf("bind RTP: %v", err)
 	}
