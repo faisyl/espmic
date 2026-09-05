@@ -33,10 +33,20 @@ header h1{font-size:1.25rem;font-weight:600}
 .btn:hover{background:var(--bar-bg)}
 .btn[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
 .btn svg{width:14px;height:14px;fill:currentColor}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-primary:hover:not(:disabled){filter:brightness(1.1)}
+.btn-danger{background:var(--red);color:#fff;border-color:var(--red)}
+.btn-danger:hover:not(:disabled){filter:brightness(1.1)}
 .status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
 .status-dot.online{background:var(--green)}
 .status-dot.offline{background:var(--red)}
 .status-dot.connecting{background:var(--amber)}
+.toast{position:fixed;bottom:1rem;right:1rem;padding:.75rem 1rem;border-radius:var(--radius);background:var(--surface);border:1px solid var(--border);box-shadow:var(--panel-shadow);font-size:.85rem;z-index:1000;display:flex;align-items:center;gap:.5rem;animation:toast-in .2s ease}
+.toast.error{border-color:var(--red)}
+.toast .toast-icon{flex-shrink:0}
+@keyframes toast-in{from{opacity:0;transform:translateY(1rem)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
 @media(max-width:768px){.grid{grid-template-columns:1fr}}
@@ -193,16 +203,31 @@ tr:last-child td{border-bottom:none}
       el.innerHTML='<div class="empty" role="status"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg><br>No devices registered</div>';
       return;
     }
-    var h='<table role="table"><thead><tr><th scope="col">Device</th><th scope="col">Display Name</th><th scope="col">Status</th><th scope="col">Firmware</th></tr></thead><tbody>';
+    var h='<table role="table"><thead><tr><th scope="col">Device</th><th scope="col">Display Name</th><th scope="col">Status</th><th scope="col">Firmware</th><th scope="col">Action</th></tr></thead><tbody>';
     for(var i=0;i<devices.length;i++){
       var d=devices[i];
       var onl=typeof d.Status==="string"&&d.Status.toLowerCase()==="online";
       h+='<tr><td class="mono">'+esc(d.DeviceID)+'</td><td>'+esc(d.DisplayName||"—")+'</td>';
       h+='<td><span class="status-dot '+(onl?"online":"offline")+'" role="img" aria-label="'+(onl?"online":"offline")+'"></span> '+(onl?"Online":"Offline")+'</td>';
-      h+='<td class="mono">'+esc(d.Firmware||"—")+'</td></tr>';
+      h+='<td class="mono">'+esc(d.Firmware||"—")+'</td>';
+      h+='<td>';
+      if(onl){
+        h+='<button class="btn btn-primary" data-device="'+esc(d.DeviceID)+'" aria-label="Start stream on '+esc(d.DeviceID)+'"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg> Start</button>';
+      } else {
+        h+='<span style="color:var(--muted);font-size:.8rem">Offline</span>';
+      }
+      h+='</td></tr>';
     }
     h+='</tbody></table>';
     el.innerHTML=h;
+    // Attach click handlers for start stream buttons
+    var btns=el.querySelectorAll('button[data-device]');
+    for(var j=0;j<btns.length;j++){
+      btns[j].addEventListener("click",function(e){
+        var deviceId=e.currentTarget.getAttribute("data-device");
+        startStream(deviceId);
+      });
+    }
   }
 
   /* ---- streams panel ---- */
@@ -216,7 +241,7 @@ tr:last-child td{border-bottom:none}
       el.innerHTML='<div class="empty" role="status"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg><br>No active streams</div>';
       return;
     }
-    var h='<table role="table"><thead><tr><th scope="col">Stream</th><th scope="col">Device</th><th scope="col">State</th><th scope="col">SSRC</th><th scope="col">Started</th><th scope="col">Packets</th><th scope="col">Lost</th><th scope="col">Jitter (ms)</th></tr></thead><tbody>';
+    var h='<table role="table"><thead><tr><th scope="col">Stream</th><th scope="col">Device</th><th scope="col">State</th><th scope="col">SSRC</th><th scope="col">Started</th><th scope="col">Packets</th><th scope="col">Lost</th><th scope="col">Jitter (ms)</th><th scope="col">Action</th></tr></thead><tbody>';
     for(var i=0;i<streamListCache.length;i++){
       var s=streamListCache[i];
       h+='<tr><td class="mono">'+esc(s.StreamID||"—")+'</td><td class="mono">'+esc(s.DeviceID||"—")+'</td>';
@@ -225,10 +250,25 @@ tr:last-child td{border-bottom:none}
       h+='<td>'+(s.StartedAt?new Date(s.StartedAt).toLocaleTimeString():"—")+'</td>';
       h+='<td>'+fmt(s.PacketsReceived)+'</td>';
       h+='<td>'+fmt(s.PacketsLost)+'</td>';
-      h+='<td>'+fmt(s.JitterMS)+'</td></tr>';
+      h+='<td>'+fmt(s.JitterMS)+'</td>';
+      h+='<td>';
+      if(s.State==="ACTIVE" || s.State==="RTP_WAIT" || s.State==="STARTING"){
+        h+='<button class="btn btn-danger" data-stream="'+esc(s.StreamID||"")+'" aria-label="Stop stream '+esc(s.StreamID||"")+'"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12"/></svg> Stop</button>';
+      } else {
+        h+='<span style="color:var(--muted);font-size:.8rem">—</span>';
+      }
+      h+='</td></tr>';
     }
     h+='</tbody></table>';
     el.innerHTML=h;
+    // Attach click handlers for stop stream buttons
+    var btns=el.querySelectorAll('button[data-stream]');
+    for(var j=0;j<btns.length;j++){
+      btns[j].addEventListener("click",function(e){
+        var streamId=e.currentTarget.getAttribute("data-stream");
+        stopStream(streamId);
+      });
+    }
   }
 
   /* ---- metrics panel ---- */
@@ -361,6 +401,68 @@ tr:last-child td{border-bottom:none}
   function startPolling(){
     poll();
     pollTimer=setInterval(poll,POLL_INTERVAL_MS);
+  }
+
+  /* ---- stream control ---- */
+  function showToast(message, isError){
+    var container=document.createElement("div");
+    container.className="toast"+(isError?" error":"");
+    var icon=isError
+      ? '<svg class="toast-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>'
+      : '<svg class="toast-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>';
+    container.innerHTML=icon+esc(message);
+    document.body.appendChild(container);
+    setTimeout(function(){container.style.opacity="0";container.style.transform="translateY(1rem)";setTimeout(function(){document.body.removeChild(container)},200)},4000);
+  }
+
+  function setButtonLoading(btn, loading){
+    if(loading){
+      btn.disabled=true;
+      btn.dataset.originalText=btn.innerHTML;
+      btn.innerHTML='<svg class="spinner" viewBox="0 0 24 24" style="width:14px;height:14px;animation:spin 1s linear infinite"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"/></svg>';
+    } else {
+      btn.disabled=false;
+      if(btn.dataset.originalText){
+        btn.innerHTML=btn.dataset.originalText;
+        delete btn.dataset.originalText;
+      }
+    }
+  }
+
+  function startStream(deviceId){
+    var btn=document.querySelector('button[data-device="'+esc(deviceId)+'"]');
+    if(btn) setButtonLoading(btn, true);
+    fetch("/api/devices/"+esc(deviceId)+"/stream",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({purpose:"dashboard"})
+    }).then(function(r){
+      if(!r.ok) return r.json().then(function(e){throw new Error((e.error||r.status)+" ("+r.status+")")});
+      return r.json();
+    }).then(function(data){
+      showToast("Stream started: "+(data.stream_id||data.state), false);
+      poll();
+    }).catch(function(err){
+      showToast("Start failed: "+err.message, true);
+    }).finally(function(){
+      if(btn) setButtonLoading(btn, false);
+    });
+  }
+
+  function stopStream(streamId){
+    var btn=document.querySelector('button[data-stream="'+esc(streamId)+'"]');
+    if(btn) setButtonLoading(btn, true);
+    fetch("/api/streams/"+esc(streamId),{method:"DELETE"}).then(function(r){
+      if(!r.ok) return r.json().then(function(e){throw new Error((e.error||r.status)+" ("+r.status+")")});
+      return r.json();
+    }).then(function(data){
+      showToast("Stream stopped: "+(data.stream_id||data.state), false);
+      poll();
+    }).catch(function(err){
+      showToast("Stop failed: "+err.message, true);
+    }).finally(function(){
+      if(btn) setButtonLoading(btn, false);
+    });
   }
 
   /* ---- refresh button ---- */
