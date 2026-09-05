@@ -26,14 +26,14 @@ type Receiver struct {
 }
 
 type streamBinding struct {
-	streamID      string
-	ssrc          uint32
-	pt            uint16
-	port          uint16
-	pc            net.PacketConn
-	jb            *JitterBuffer
-	cancel        context.CancelFunc
-	workerCancel  context.CancelFunc // for stopping the audio worker
+	streamID     string
+	ssrc         uint32
+	pt           uint16
+	port         uint16
+	pc           net.PacketConn
+	jb           *JitterBuffer
+	cancel       context.CancelFunc
+	workerCancel context.CancelFunc // for stopping the audio worker
 }
 
 // JitterBuffer returns the jitter buffer for this stream binding.
@@ -72,7 +72,7 @@ func (r *Receiver) Bind(ctx context.Context, streamID string, ssrc uint32, pt ui
 		pt:       uint16(pt),
 		port:     port,
 		pc:       pc,
-		jb:       New(60*time.Millisecond),
+		jb:       New(60 * time.Millisecond),
 		cancel:   cancel,
 	}
 	r.streams[streamID] = b

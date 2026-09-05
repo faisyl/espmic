@@ -52,12 +52,12 @@ const (
 // Concurrency: all state mutations and reads are guarded by an internal RWMutex.
 // State reads use State() accessor; internal methods hold Lock/RLock as needed.
 type Stream struct {
-	StreamID        string
-	DeviceID        string
-	SSRC            uint32
-	state           StreamState // private; use State() accessor
-	StartedAt       time.Time
-	Reason          FailureReason
+	StreamID  string
+	DeviceID  string
+	SSRC      uint32
+	state     StreamState // private; use State() accessor
+	StartedAt time.Time
+	Reason    FailureReason
 
 	streamStartedAt time.Time // when device sent stream_started (RTP_WAIT clock)
 	lastPacketAt    time.Time // last RTP packet in ACTIVE (RTP_TIMEOUT clock)

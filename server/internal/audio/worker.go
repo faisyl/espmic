@@ -13,13 +13,13 @@ import (
 // DecodedAudioFrame to the PCM bus (spec §11→§12→§14). It runs one goroutine
 // per active stream and is driven by ctx for teardown.
 type Worker struct {
-	streamID       string
-	jb             *rtp.JitterBuffer
-	decoder        Decoder
-	bus            *PCMBus
-	metrics        *metrics.Metrics
-	now            func() time.Time
-	onPacket       func(first bool) // callback for stream state (FirstPacket/Packet)
+	streamID        string
+	jb              *rtp.JitterBuffer
+	decoder         Decoder
+	bus             *PCMBus
+	metrics         *metrics.Metrics
+	now             func() time.Time
+	onPacket        func(first bool) // callback for stream state (FirstPacket/Packet)
 	firstPacketSent bool             // track if FirstPacket has been fired
 
 	mu     sync.Mutex
@@ -33,13 +33,13 @@ type Worker struct {
 // packet (triggers RTP_WAIT->ACTIVE), false thereafter (refreshes ACTIVE clock).
 func NewWorker(streamID string, jb *rtp.JitterBuffer, dec Decoder, bus *PCMBus, m *metrics.Metrics, onPacket func(first bool)) *Worker {
 	return &Worker{
-		streamID:  streamID,
-		jb:        jb,
-		decoder:   dec,
-		bus:       bus,
-		metrics:   m,
-		now:       time.Now,
-		onPacket:  onPacket,
+		streamID: streamID,
+		jb:       jb,
+		decoder:  dec,
+		bus:      bus,
+		metrics:  m,
+		now:      time.Now,
+		onPacket: onPacket,
 	}
 }
 
