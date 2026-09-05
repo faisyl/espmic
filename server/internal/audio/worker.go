@@ -13,12 +13,14 @@ import (
 // DecodedAudioFrame to the PCM bus (spec §11→§12→§14). It runs one goroutine
 // per active stream and is driven by ctx for teardown.
 type Worker struct {
-	streamID string
-	jb       *rtp.JitterBuffer
-	decoder  Decoder
-	bus      *PCMBus
-	metrics  *metrics.Metrics
-	now      func() time.Time
+	streamID       string
+	jb             *rtp.JitterBuffer
+	decoder        Decoder
+	bus            *PCMBus
+	metrics        *metrics.Metrics
+	now            func() time.Time
+	onPacket       func(first bool) // callback for stream state (FirstPacket/Packet)
+	firstPacketSent bool             // track if FirstPacket has been fired
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -26,15 +28,18 @@ type Worker struct {
 
 // NewWorker returns a worker bound to the given jitter buffer, decoder and
 // bus. Ownership of the decoder stays with the Worker (one decoder per
-// stream, Decoder is not concurrency-safe, spec §12).
-func NewWorker(streamID string, jb *rtp.JitterBuffer, dec Decoder, bus *PCMBus, m *metrics.Metrics) *Worker {
+// stream, Decoder is not concurrency-safe, spec §12). onPacket is called
+// for each packet dequeued from the jitter buffer; first=true on the first
+// packet (triggers RTP_WAIT->ACTIVE), false thereafter (refreshes ACTIVE clock).
+func NewWorker(streamID string, jb *rtp.JitterBuffer, dec Decoder, bus *PCMBus, m *metrics.Metrics, onPacket func(first bool)) *Worker {
 	return &Worker{
-		streamID: streamID,
-		jb:       jb,
-		decoder:  dec,
-		bus:      bus,
-		metrics:  m,
-		now:      time.Now,
+		streamID:  streamID,
+		jb:        jb,
+		decoder:   dec,
+		bus:       bus,
+		metrics:   m,
+		now:       time.Now,
+		onPacket:  onPacket,
 	}
 }
 
@@ -57,6 +62,14 @@ func (w *Worker) Start(ctx context.Context) {
 		}
 		packets := w.jb.Emit(w.now())
 		for _, p := range packets {
+			// Fire stream state callback for EVERY packet dequeued from jitter buffer
+			// (not gated on successful decode) — spec §17: RTP_WAIT->ACTIVE on first packet
+			if w.onPacket != nil {
+				first := !w.firstPacketSent
+				w.firstPacketSent = true
+				w.onPacket(first)
+			}
+
 			spc, err := w.decoder.Decode(p.Payload, outBuf)
 			if err != nil {
 				if w.metrics != nil {

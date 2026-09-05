@@ -296,6 +296,34 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 	case *control.StreamStarted:
 		// Device accepted, transition to RTP_WAIT
 		_ = st.StreamStarted(time.Now())
+
+		// Get the jitter buffer and start the audio worker
+		binding, ok := s.rtp.GetStreamBinding(streamID)
+		if !ok {
+			s.rtp.CloseStream(streamID)
+			s.stream.Remove(streamID)
+			return nil, fmt.Errorf("stream binding not found after start")
+		}
+		jb := binding.JitterBuffer()
+
+		// Create and start the audio worker
+		dec := audio.NewPionDecoder()
+		dec.Reset()
+
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		s.rtp.SetWorkerCancel(streamID, workerCancel)
+
+		worker := audio.NewWorker(streamID, jb, dec, s.bus, s.metrics, func(first bool) {
+			// Called for each packet dequeued from jitter buffer
+			// (not gated on successful decode) — spec §17: RTP_WAIT->ACTIVE on first packet
+			if first {
+				_ = st.FirstPacket(time.Now())
+			} else {
+				st.Packet(time.Now())
+			}
+		})
+		go worker.Start(workerCtx)
+
 		return map[string]any{
 			"stream_id": streamID,
 			"ssrc":      ssrc,
@@ -342,7 +370,7 @@ func (s *Server) StopStream(ctx context.Context, streamID string) error {
 		return fmt.Errorf("send stop_stream: %w", err)
 	}
 
-	// Close RTP
+	// Close RTP (this also cancels the worker via CloseStream)
 	s.rtp.CloseStream(streamID)
 
 	// Check reply

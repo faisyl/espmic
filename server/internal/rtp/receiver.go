@@ -26,13 +26,19 @@ type Receiver struct {
 }
 
 type streamBinding struct {
-	streamID string
-	ssrc     uint32
-	pt       uint16
-	port     uint16
-	pc       net.PacketConn
-	jb       *JitterBuffer
-	cancel   context.CancelFunc
+	streamID      string
+	ssrc          uint32
+	pt            uint16
+	port          uint16
+	pc            net.PacketConn
+	jb            *JitterBuffer
+	cancel        context.CancelFunc
+	workerCancel  context.CancelFunc // for stopping the audio worker
+}
+
+// JitterBuffer returns the jitter buffer for this stream binding.
+func (b *streamBinding) JitterBuffer() *JitterBuffer {
+	return b.jb
 }
 
 // NewReceiver returns a receiver wired to the shared metrics surface.
@@ -96,6 +102,26 @@ func (r *Receiver) StreamStats(streamID string) (Stats, bool) {
 	return b.jb.Statistics(), true
 }
 
+// GetStreamBinding returns the streamBinding for streamID (for wiring worker to jitter buffer).
+func (r *Receiver) GetStreamBinding(streamID string) (*streamBinding, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, ok := r.streams[streamID]
+	if !ok {
+		return nil, false
+	}
+	return b, true
+}
+
+// SetWorkerCancel sets the worker cancel function for a stream.
+func (r *Receiver) SetWorkerCancel(streamID string, cancel context.CancelFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if b, ok := r.streams[streamID]; ok {
+		b.workerCancel = cancel
+	}
+}
+
 // CloseStream tears down the UDP socket and goroutine for streamID.
 func (r *Receiver) CloseStream(streamID string) {
 	r.mu.Lock()
@@ -104,6 +130,10 @@ func (r *Receiver) CloseStream(streamID string) {
 	r.mu.Unlock()
 	if !ok {
 		return
+	}
+	// Cancel worker first (if running)
+	if b.workerCancel != nil {
+		b.workerCancel()
 	}
 	b.cancel()
 	_ = b.pc.Close()

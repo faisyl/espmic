@@ -12,11 +12,15 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
+	"espmic/server/internal/audio"
 	"espmic/server/internal/config"
 	"espmic/server/internal/device"
+	"espmic/server/internal/rtp"
+	"espmic/server/internal/stream"
 )
 
 func generateSelfSignedCert(t *testing.T, dir string) (certFile, keyFile string) {
@@ -187,5 +191,117 @@ func TestAuthenticateConstantTimeCompare(t *testing.T) {
 	}
 	if err := srv.Authenticate(ctx, "dev2", "secr"); err != device.ErrAuthFailed {
 		t.Fatalf("expected ErrAuthFailed for shorter string")
+	}
+}
+
+// TestAudioPipelineEndToEnd verifies the decode pipeline wiring:
+// RTP -> jitter buffer -> decoder -> PCM bus + stream state RTP_WAIT -> ACTIVE.
+// Uses a StubDecoder to avoid Opus encoding complexity in-test (per god refinement #2).
+func TestAudioPipelineEndToEnd(t *testing.T) {
+	cfg := config.Load()
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Bind RTP directly (bypass control handshake per god refinement #2)
+	streamID := "test-stream"
+	ssrc := uint32(0x12345678)
+	_, err = srv.rtp.Bind(ctx, streamID, ssrc, 111)
+	if err != nil {
+		t.Fatalf("bind RTP: %v", err)
+	}
+	defer srv.rtp.CloseStream(streamID)
+
+	// Get the jitter buffer
+	binding, ok := srv.rtp.GetStreamBinding(streamID)
+	if !ok {
+		t.Fatal("stream binding not found")
+	}
+	jb := binding.JitterBuffer()
+
+	// Create stream and add to registry
+	st := stream.New(streamID, "test-device", ssrc, time.Now())
+	st.WithTimeoutConfig(stream.TimeoutConfig{
+		RTPWait:      5 * time.Second,
+		RTPDisappear: 1 * time.Second,
+	})
+	srv.stream.Add(st)
+	defer srv.stream.Remove(streamID)
+
+	// Start -> WAITING_FOR_DEVICE -> STARTING -> RTP_WAIT
+	_ = st.Start(time.Now())
+	_ = st.DeviceCommandSent()
+	_ = st.StreamStarted(time.Now())
+	if st.State != stream.StateRTPWait {
+		t.Fatalf("expected RTP_WAIT, got %s", st.State)
+	}
+
+	// Use a StubDecoder to avoid Opus encoding complexity (per god refinement #2)
+	dec := audio.NewStubDecoder(960, 2) // 960 samples per channel at 48kHz/20ms
+
+	// Collect PCM frames from the bus
+	var framesMu sync.Mutex
+	var frames []*audio.DecodedAudioFrame
+	srv.bus.Subscribe(&audioTestListener{onPCM: func(f *audio.DecodedAudioFrame) {
+		framesMu.Lock()
+		frames = append(frames, f)
+		framesMu.Unlock()
+	}})
+	defer srv.bus.Unsubscribe(&audioTestListener{})
+
+	// Create and start worker
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	srv.rtp.SetWorkerCancel(streamID, workerCancel)
+
+	worker := audio.NewWorker(streamID, binding.JitterBuffer(), dec, srv.bus, srv.metrics, func(first bool) {
+		if first {
+			_ = st.FirstPacket(time.Now())
+		} else {
+			st.Packet(time.Now())
+		}
+	})
+	go worker.Start(workerCtx)
+	defer workerCancel()
+
+	// Push a packet directly to the jitter buffer (bypassing UDP for test simplicity)
+	p := rtp.Packet{
+		Version:        2,
+		PayloadType:    111,
+		SequenceNumber: 100,
+		Timestamp:      0,
+		SSRC:           ssrc,
+		Payload:        []byte{0x00, 0x00}, // minimal Opus packet (stub decodes to silence)
+	}
+	jb.Push(p, time.Now())
+
+	// Wait for worker to process
+	time.Sleep(100 * time.Millisecond)
+
+	// Check stream state reached ACTIVE
+	if st.State != stream.StateActive {
+		t.Fatalf("expected ACTIVE, got %s", st.State)
+	}
+
+	// Check PCM frames received on bus
+	framesMu.Lock()
+	frameCount := len(frames)
+	framesMu.Unlock()
+	if frameCount == 0 {
+		t.Fatal("expected PCM frames on bus, got 0")
+	}
+	t.Logf("Received %d PCM frames on bus", frameCount)
+}
+
+// audioTestListener implements audio.PCMListener for testing.
+type audioTestListener struct {
+	onPCM func(*audio.DecodedAudioFrame)
+}
+
+func (l *audioTestListener) OnPCM(f *audio.DecodedAudioFrame) {
+	if l.onPCM != nil {
+		l.onPCM(f)
 	}
 }
