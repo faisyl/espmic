@@ -143,10 +143,13 @@ func TestMessagesRoundtrip(t *testing.T) {
 		{"hello_ack", NewHelloAck("sess-1", "esp32-001")},
 		{"ping", NewPing(5)},
 		{"pong", NewPong(5)},
-		{"start_stream", NewStartStream("uuid", 1234567, 5004)},
-		{"stream_started", NewStreamStarted("uuid")},
-		{"stop_stream", NewStopStream("uuid")},
-		{"stream_stopped", NewStreamStopped("uuid", nil)},
+		{"start_stream", NewStartStream("req-1", "uuid", 1234567,
+			Destination{IP: "192.168.1.100", Port: 5004},
+			Codec{Name: "opus", SampleRate: 48000, Channels: 2, FrameMS: 20, Bitrate: 128000, VBR: true, FEC: false, DTX: false},
+			RTPConfig{PayloadType: 111})},
+		{"stream_started", NewStreamStarted("req-1", "uuid")},
+		{"stop_stream", NewStopStream("req-1", "uuid")},
+		{"stream_stopped", NewStreamStopped("req-1", "uuid", nil)},
 		{"get_status", NewGetStatus()},
 		{"status", NewStatus("ok", map[string]any{"battery": 88})},
 		{"error", NewError(7, "boom")},
@@ -184,7 +187,10 @@ func TestMessageKindConstants(t *testing.T) {
 
 func TestWriteMessageReadFrameRoundtrip(t *testing.T) {
 	var b bytes.Buffer
-	orig := NewStartStream("uuid", 42, 5004)
+	orig := NewStartStream("req-1", "uuid", 42,
+		Destination{IP: "192.168.1.100", Port: 5004},
+		Codec{Name: "opus", SampleRate: 48000, Channels: 2, FrameMS: 20, Bitrate: 128000, VBR: true, FEC: false, DTX: false},
+		RTPConfig{PayloadType: 111})
 	if err := WriteMessage(&b, orig); err != nil {
 		t.Fatalf("WriteMessage: %v", err)
 	}
@@ -200,7 +206,7 @@ func TestWriteMessageReadFrameRoundtrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("type = %T, want *StartStream", got)
 	}
-	if ss.SSRC != 42 || ss.DestinationPort != 5004 || ss.StreamID != "uuid" {
+	if ss.SSRC != 42 || ss.Destination.Port != 5004 || ss.StreamID != "uuid" || ss.RequestID != "req-1" {
 		t.Fatalf("unexpected start_stream fields: %+v", ss)
 	}
 }

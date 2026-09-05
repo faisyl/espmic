@@ -365,7 +365,10 @@ func TestSessionManagerSendStartStreamSuccess(t *testing.T) {
 	conn.nextWrite(t, time.Second)
 
 	// Send start_stream through the manager and reply with stream_started.
-	req := NewStartStream("strm-01", 1234567, 5004)
+	req := NewStartStream("req-1", "strm-01", 1234567,
+		Destination{IP: "192.168.1.100", Port: 5004},
+		Codec{Name: "opus", SampleRate: 48000, Channels: 2, FrameMS: 20, Bitrate: 128000, VBR: true, FEC: false, DTX: false},
+		RTPConfig{PayloadType: 111})
 
 	replyCh := make(chan Message, 1)
 	go func() {
@@ -383,12 +386,12 @@ func TestSessionManagerSendStartStreamSuccess(t *testing.T) {
 	if !ok {
 		t.Fatalf("device received %T, want *StartStream", got)
 	}
-	if ss.StreamID != "strm-01" || ss.SSRC != 1234567 || ss.DestinationPort != 5004 {
+	if ss.StreamID != "strm-01" || ss.SSRC != 1234567 || ss.Destination.Port != 5004 || ss.RequestID != "req-1" {
 		t.Fatalf("unexpected start_stream: %+v", ss)
 	}
 
 	// Device replies with stream_started.
-	conn.deliver(t, NewStreamStarted("strm-01"))
+	conn.deliver(t, NewStreamStarted("req-1", "strm-01"))
 
 	select {
 	case msg := <-replyCh:
@@ -421,7 +424,10 @@ func TestSessionManagerSendStartStreamRejected(t *testing.T) {
 	conn.deliver(t, NewHello("d1", "token", "1.0", nil))
 	conn.nextWrite(t, time.Second)
 
-	req := NewStartStream("strm-02", 1234567, 5004)
+	req := NewStartStream("req-2", "strm-02", 1234567,
+		Destination{IP: "192.168.1.100", Port: 5004},
+		Codec{Name: "opus", SampleRate: 48000, Channels: 2, FrameMS: 20, Bitrate: 128000, VBR: true, FEC: false, DTX: false},
+		RTPConfig{PayloadType: 111})
 
 	replyCh := make(chan Message, 1)
 	go func() {
@@ -435,8 +441,8 @@ func TestSessionManagerSendStartStreamRejected(t *testing.T) {
 
 	conn.nextWrite(t, time.Second) // consume start_stream
 
-	// Device replies with an error.
-	conn.deliver(t, &Error{Type: TypeError, StreamID: "strm-02", Code: ErrorCode("busy"), Message: "device busy"})
+	// Device replies with an error (must include RequestID for correlation).
+	conn.deliver(t, &Error{Type: TypeError, RequestID: "req-2", StreamID: "strm-02", Code: ErrorCode("busy"), Message: "device busy"})
 
 	select {
 	case msg := <-replyCh:
@@ -469,7 +475,7 @@ func TestSessionManagerSendStopStreamSuccess(t *testing.T) {
 	conn.deliver(t, NewHello("d1", "token", "1.0", nil))
 	conn.nextWrite(t, time.Second)
 
-	req := NewStopStream("strm-03")
+	req := NewStopStream("req-3", "strm-03")
 
 	replyCh := make(chan Message, 1)
 	go func() {
@@ -490,7 +496,7 @@ func TestSessionManagerSendStopStreamSuccess(t *testing.T) {
 		t.Fatalf("stream_id = %q, want strm-03", st.StreamID)
 	}
 
-	conn.deliver(t, NewStreamStopped("strm-03", nil))
+	conn.deliver(t, NewStreamStopped("req-3", "strm-03", nil))
 
 	select {
 	case msg := <-replyCh:
@@ -510,7 +516,10 @@ func TestSessionManagerSendStopStreamSuccess(t *testing.T) {
 
 func TestSessionManagerSendStartStreamNotConnected(t *testing.T) {
 	mgr := NewSessionManager()
-	req := NewStartStream("strm-x", 123, 456)
+	req := NewStartStream("req-x", "strm-x", 123,
+		Destination{IP: "192.168.1.100", Port: 456},
+		Codec{Name: "opus", SampleRate: 48000, Channels: 2, FrameMS: 20, Bitrate: 128000, VBR: true, FEC: false, DTX: false},
+		RTPConfig{PayloadType: 111})
 	_, err := mgr.SendStartStream(context.Background(), "offline-device", req)
 	if err == nil || err.Error() != "control: device not connected" {
 		t.Fatalf("expected ErrNotConnected, got %v", err)
@@ -519,7 +528,7 @@ func TestSessionManagerSendStartStreamNotConnected(t *testing.T) {
 
 func TestSessionManagerSendStopStreamNotConnected(t *testing.T) {
 	mgr := NewSessionManager()
-	req := NewStopStream("strm-x")
+	req := NewStopStream("req-x", "strm-x")
 	_, err := mgr.SendStopStream(context.Background(), "offline-device", req)
 	if err == nil || err.Error() != "control: device not connected" {
 		t.Fatalf("expected ErrNotConnected, got %v", err)

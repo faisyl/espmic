@@ -236,6 +236,7 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 	// Generate stream ID and SSRC
 	streamID := newStreamID()
 	ssrc := newSSRC()
+	requestID := newRequestID()
 
 	// Bind RTP port
 	port, err := s.rtp.Bind(ctx, streamID, ssrc, 111) // PT 111 for Opus
@@ -255,9 +256,32 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 	_ = st.Start(time.Now())
 	_ = st.DeviceCommandSent()
 
-	// Send start_stream to device
-	startReq := control.NewStartStream(streamID, ssrc, port)
-	startReq.DestinationHost = s.cfg.ControlAddr // use control addr host
+	// Determine the server IP the device connected to (from the control session)
+	// We don't have direct access to the session here, so use a best-effort:
+	// if ControlAddr is a specific IP, use that; otherwise use localhost fallback
+	serverIP := "127.0.0.1"
+	if s.cfg.ControlAddr != "" {
+		host, _, err := net.SplitHostPort(s.cfg.ControlAddr)
+		if err == nil && host != "" && host != "0.0.0.0" && host != "::" {
+			serverIP = host
+		}
+	}
+
+	// Send start_stream to device with full spec §11 schema
+	dest := control.Destination{IP: serverIP, Port: port}
+	codec := control.Codec{
+		Name:       "opus",
+		SampleRate: 48000,
+		Channels:   2,
+		FrameMS:    20,
+		Bitrate:    128000,
+		VBR:        true,
+		FEC:        false,
+		DTX:        false,
+	}
+	rtpCfg := control.RTPConfig{PayloadType: 111}
+
+	startReq := control.NewStartStream(requestID, streamID, ssrc, dest, codec, rtpCfg)
 
 	msg, err := s.ctrl.SendStartStream(ctx, deviceID, startReq)
 	if err != nil {
@@ -308,7 +332,8 @@ func (s *Server) StopStream(ctx context.Context, streamID string) error {
 	_ = st.StopRequested()
 
 	// Send stop_stream to device
-	stopReq := control.NewStopStream(streamID)
+	requestID := newRequestID()
+	stopReq := control.NewStopStream(requestID, streamID)
 	msg, err := s.ctrl.SendStopStream(ctx, st.DeviceID, stopReq)
 	if err != nil {
 		// Still close RTP and mark stopped
@@ -349,6 +374,13 @@ func newSSRC() uint32 {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
 	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+}
+
+// newRequestID generates a random request ID for correlation.
+func newRequestID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("req-%x", b[:])
 }
 
 func (s *Server) Close() error {

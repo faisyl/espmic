@@ -233,11 +233,11 @@ func TestCommandServiceValidate(t *testing.T) {
 
 func TestCommandServiceBuildCommands(t *testing.T) {
 	cs := NewCommandService()
-	ss := cs.BuildStartStream("s1", 42, 5004)
-	if ss.StreamID != "s1" || ss.SSRC != 42 || ss.DestinationPort != 5004 {
+	ss := cs.BuildStartStream("req-1", "s1", 42, "127.0.0.1", 5004)
+	if ss.StreamID != "s1" || ss.SSRC != 42 || ss.Destination.Port != 5004 {
 		t.Fatalf("start_stream: %+v", ss)
 	}
-	st := cs.BuildStopStream("s1")
+	st := cs.BuildStopStream("req-1", "s1")
 	if st.StreamID != "s1" {
 		t.Fatalf("stop_stream: %+v", st)
 	}
@@ -261,7 +261,7 @@ func TestCommandServiceAwaitDeliver(t *testing.T) {
 
 	// Give Await time to register.
 	time.Sleep(10 * time.Millisecond)
-	if !cs.Deliver(NewStreamStarted("s1")) {
+	if !cs.Deliver(NewStreamStarted("req-1", "s1")) {
 		t.Fatal("Deliver should find the awaiting caller")
 	}
 
@@ -275,13 +275,13 @@ func TestCommandServiceAwaitDeliver(t *testing.T) {
 
 func TestCommandServiceDeliverUnsolicited(t *testing.T) {
 	cs := NewCommandService()
-	if cs.Deliver(NewStreamStarted("nobody")) {
+	if cs.Deliver(NewStreamStarted("req-x", "nobody")) {
 		t.Fatal("unsolicited deliver should return false")
 	}
 }
 
 func TestStreamStoppedStatsField(t *testing.T) {
-	st := NewStreamStopped("s1", map[string]any{"packets": 100})
+	st := NewStreamStopped("req-1", "s1", map[string]any{"packets": 100})
 	if st.Stats["packets"] != 100 {
 		t.Fatalf("stats = %+v", st.Stats)
 	}

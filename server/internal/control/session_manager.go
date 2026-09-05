@@ -149,6 +149,10 @@ func requestIDOf(msg Message) string {
 		return m.RequestID
 	case *Error:
 		return m.RequestID
+	case *StreamStarted:
+		return m.RequestID
+	case *StreamStopped:
+		return m.RequestID
 	default:
 		return ""
 	}
@@ -159,6 +163,9 @@ func (m *SessionManager) SendStartStream(ctx context.Context, deviceID string, r
 	if req == nil {
 		return nil, errors.New("control: nil start_stream")
 	}
+	if req.RequestID == "" {
+		return nil, errors.New("control: start_stream requires request_id")
+	}
 	if req.StreamID == "" {
 		return nil, errors.New("control: start_stream requires stream_id")
 	}
@@ -168,16 +175,16 @@ func (m *SessionManager) SendStartStream(ctx context.Context, deviceID string, r
 	}
 
 	m.mu.Lock()
-	if _, dup := m.streamCh[req.StreamID]; dup {
+	if _, dup := m.streamCh[req.RequestID]; dup {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("control: duplicate await for stream %q", req.StreamID)
+		return nil, fmt.Errorf("control: duplicate await for request %q", req.RequestID)
 	}
 	ch := make(chan Message, 1)
-	m.streamCh[req.StreamID] = ch
+	m.streamCh[req.RequestID] = ch
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
-		delete(m.streamCh, req.StreamID)
+		delete(m.streamCh, req.RequestID)
 		m.mu.Unlock()
 	}()
 
@@ -198,6 +205,9 @@ func (m *SessionManager) SendStopStream(ctx context.Context, deviceID string, re
 	if req == nil {
 		return nil, errors.New("control: nil stop_stream")
 	}
+	if req.RequestID == "" {
+		return nil, errors.New("control: stop_stream requires request_id")
+	}
 	if req.StreamID == "" {
 		return nil, errors.New("control: stop_stream requires stream_id")
 	}
@@ -207,16 +217,16 @@ func (m *SessionManager) SendStopStream(ctx context.Context, deviceID string, re
 	}
 
 	m.mu.Lock()
-	if _, dup := m.streamCh[req.StreamID]; dup {
+	if _, dup := m.streamCh[req.RequestID]; dup {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("control: duplicate await for stream %q", req.StreamID)
+		return nil, fmt.Errorf("control: duplicate await for request %q", req.RequestID)
 	}
 	ch := make(chan Message, 1)
-	m.streamCh[req.StreamID] = ch
+	m.streamCh[req.RequestID] = ch
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
-		delete(m.streamCh, req.StreamID)
+		delete(m.streamCh, req.RequestID)
 		m.mu.Unlock()
 	}()
 
@@ -232,24 +242,24 @@ func (m *SessionManager) SendStopStream(ctx context.Context, deviceID string, re
 	}
 }
 
-// deliverStream routes StreamStarted/StreamStopped/Error (with StreamID) to awaiting stream caller.
+// deliverStream routes StreamStarted/StreamStopped/Error (with RequestID) to awaiting stream caller.
 func (m *SessionManager) deliverStream(msg Message) bool {
-	var sid string
+	var rid string
 	switch m := msg.(type) {
 	case *StreamStarted:
-		sid = m.StreamID
+		rid = m.RequestID
 	case *StreamStopped:
-		sid = m.StreamID
+		rid = m.RequestID
 	case *Error:
-		sid = m.StreamID
+		rid = m.RequestID
 	default:
 		return false
 	}
-	if sid == "" {
+	if rid == "" {
 		return false
 	}
 	m.mu.Lock()
-	ch, ok := m.streamCh[sid]
+	ch, ok := m.streamCh[rid]
 	m.mu.Unlock()
 	if !ok {
 		return false

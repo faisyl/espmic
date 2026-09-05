@@ -34,16 +34,18 @@ func (s *CommandService) ValidateStart(streamID, deviceID string, ssrc uint32) e
 	return nil
 }
 
-// BuildStartStream constructs a start_stream command (spec §9). The server
-// allocates the destination port internally (spec §16: caller should not
-// provide an arbitrary UDP destination).
-func (s *CommandService) BuildStartStream(streamID string, ssrc uint32, destPort uint16) *StartStream {
-	return NewStartStream(streamID, ssrc, destPort)
+// BuildStartStream constructs a start_stream command (spec §9, §11). The server
+// allocates the destination port internally and fills in the full spec schema.
+func (s *CommandService) BuildStartStream(requestID, streamID string, ssrc uint32, destIP string, destPort uint16) *StartStream {
+	return NewStartStream(requestID, streamID, ssrc,
+		Destination{IP: destIP, Port: destPort},
+		Codec{Name: "opus", SampleRate: 48000, Channels: 2, FrameMS: 20, Bitrate: 128000, VBR: true, FEC: false, DTX: false},
+		RTPConfig{PayloadType: 111})
 }
 
 // BuildStopStream constructs a stop_stream command (spec §9).
-func (s *CommandService) BuildStopStream(streamID string) *StopStream {
-	return NewStopStream(streamID)
+func (s *CommandService) BuildStopStream(requestID, streamID string) *StopStream {
+	return NewStopStream(requestID, streamID)
 }
 
 // BuildGetStatus constructs a get_status command (spec §8).

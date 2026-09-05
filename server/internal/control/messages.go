@@ -92,54 +92,90 @@ func NewPong(seq uint32) *Pong { return &Pong{Type: TypePong, Seq: seq} }
 
 func (m *Pong) Kind() string { return TypePong }
 
-// StartStream requests a device to begin RTP (server -> device).
-type StartStream struct {
-	Type            string `json:"type"`
-	StreamID        string `json:"stream_id"`
-	SSRC            uint32 `json:"ssrc"`
-	DestinationPort uint16 `json:"destination_port"`
-	DestinationHost string `json:"destination_host,omitempty"`
+// Destination holds the destination IP and port for RTP (spec §11).
+type Destination struct {
+	IP   string `json:"ip"`
+	Port uint16 `json:"port"`
 }
 
-func NewStartStream(streamID string, ssrc uint32, port uint16) *StartStream {
-	return &StartStream{Type: TypeStartStream, StreamID: streamID, SSRC: ssrc, DestinationPort: port}
+// Codec holds the codec configuration for the stream (spec §11).
+type Codec struct {
+	Name       string `json:"name"`         // "opus"
+	SampleRate int    `json:"sample_rate"`  // 48000
+	Channels   int    `json:"channels"`     // 2
+	FrameMS    int    `json:"frame_ms"`     // 20
+	Bitrate    int    `json:"bitrate"`      // e.g. 128000
+	VBR        bool   `json:"vbr"`          // true
+	FEC        bool   `json:"fec"`          // false
+	DTX        bool   `json:"dtx"`          // false
+}
+
+// RTPConfig holds the RTP payload type (spec §11).
+type RTPConfig struct {
+	PayloadType uint8 `json:"payload_type"`
+}
+
+// StartStream requests a device to begin RTP (server -> device) per spec §11.
+type StartStream struct {
+	Type         string      `json:"type"`
+	RequestID    string      `json:"request_id"`
+	StreamID     string      `json:"stream_id"`
+	SSRC         uint32      `json:"ssrc"`
+	Destination  Destination `json:"destination"`
+	Codec        Codec       `json:"codec"`
+	RTP          RTPConfig   `json:"rtp"`
+}
+
+func NewStartStream(requestID, streamID string, ssrc uint32, dest Destination, codec Codec, rtp RTPConfig) *StartStream {
+	return &StartStream{
+		Type:        TypeStartStream,
+		RequestID:   requestID,
+		StreamID:    streamID,
+		SSRC:        ssrc,
+		Destination: dest,
+		Codec:       codec,
+		RTP:         rtp,
+	}
 }
 
 func (m *StartStream) Kind() string { return TypeStartStream }
 
 // StreamStarted confirms a stream is running (device -> server).
 type StreamStarted struct {
-	Type     string `json:"type"`
-	StreamID string `json:"stream_id"`
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	StreamID  string `json:"stream_id"`
 }
 
-func NewStreamStarted(streamID string) *StreamStarted {
-	return &StreamStarted{Type: TypeStreamStarted, StreamID: streamID}
+func NewStreamStarted(requestID, streamID string) *StreamStarted {
+	return &StreamStarted{Type: TypeStreamStarted, RequestID: requestID, StreamID: streamID}
 }
 
 func (m *StreamStarted) Kind() string { return TypeStreamStarted }
 
-// StopStream requests a device to stop RTP (server -> device).
+// StopStream requests a device to stop RTP (server -> device) per spec §11.
 type StopStream struct {
-	Type     string `json:"type"`
-	StreamID string `json:"stream_id"`
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	StreamID  string `json:"stream_id"`
 }
 
-func NewStopStream(streamID string) *StopStream {
-	return &StopStream{Type: TypeStopStream, StreamID: streamID}
+func NewStopStream(requestID, streamID string) *StopStream {
+	return &StopStream{Type: TypeStopStream, RequestID: requestID, StreamID: streamID}
 }
 
 func (m *StopStream) Kind() string { return TypeStopStream }
 
 // StreamStopped confirms a stream stopped, optionally with stats (device -> server).
 type StreamStopped struct {
-	Type     string         `json:"type"`
-	StreamID string         `json:"stream_id"`
-	Stats    map[string]any `json:"stats,omitempty"`
+	Type      string         `json:"type"`
+	RequestID string         `json:"request_id"`
+	StreamID  string         `json:"stream_id"`
+	Stats     map[string]any `json:"stats,omitempty"`
 }
 
-func NewStreamStopped(streamID string, stats map[string]any) *StreamStopped {
-	return &StreamStopped{Type: TypeStreamStopped, StreamID: streamID, Stats: stats}
+func NewStreamStopped(requestID, streamID string, stats map[string]any) *StreamStopped {
+	return &StreamStopped{Type: TypeStreamStopped, RequestID: requestID, StreamID: streamID, Stats: stats}
 }
 
 func (m *StreamStopped) Kind() string { return TypeStreamStopped }
