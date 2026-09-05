@@ -9,8 +9,8 @@ var t0 = time.Unix(1_000_000, 0).UTC()
 
 func TestLifecycleHappyPath(t *testing.T) {
 	s := New("s1", "d1", 42, t0)
-	if s.State != StateCreated {
-		t.Fatalf("initial state = %s, want CREATED", s.State)
+	if s.State() != StateCreated {
+		t.Fatalf("initial state = %s, want CREATED", s.State())
 	}
 	if err := s.Start(t0); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -30,8 +30,8 @@ func TestLifecycleHappyPath(t *testing.T) {
 	if err := s.Stopped(); err != nil {
 		t.Fatalf("Stopped: %v", err)
 	}
-	if s.State != StateComplete {
-		t.Fatalf("final state = %s, want COMPLETE", s.State)
+	if s.State() != StateComplete {
+		t.Fatalf("final state = %s, want COMPLETE", s.State())
 	}
 }
 
@@ -120,8 +120,8 @@ func TestFailureEdges(t *testing.T) {
 	for _, tc := range cases {
 		s := New("s1", "d1", 1, t0)
 		tc.run(s)
-		if s.State != tc.want {
-			t.Fatalf("%s: state = %s, want %s", tc.name, s.State, tc.want)
+		if s.State() != tc.want {
+			t.Fatalf("%s: state = %s, want %s", tc.name, s.State(), tc.want)
 		}
 		if s.Reason == FailureNone {
 			t.Fatalf("%s: expected a failure reason", tc.name)

@@ -235,8 +235,8 @@ func TestAudioPipelineEndToEnd(t *testing.T) {
 	_ = st.Start(time.Now())
 	_ = st.DeviceCommandSent()
 	_ = st.StreamStarted(time.Now())
-	if st.State != stream.StateRTPWait {
-		t.Fatalf("expected RTP_WAIT, got %s", st.State)
+	if st.State() != stream.StateRTPWait {
+		t.Fatalf("expected RTP_WAIT, got %s", st.State())
 	}
 
 	// Use a StubDecoder to avoid Opus encoding complexity (per god refinement #2)
@@ -281,8 +281,8 @@ func TestAudioPipelineEndToEnd(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Check stream state reached ACTIVE
-	if st.State != stream.StateActive {
-		t.Fatalf("expected ACTIVE, got %s", st.State)
+	if st.State() != stream.StateActive {
+		t.Fatalf("expected ACTIVE, got %s", st.State())
 	}
 
 	// Check PCM frames received on bus

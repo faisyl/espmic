@@ -204,7 +204,7 @@ func (s *Server) StreamList() interface{} {
 			StreamID:  st.StreamID,
 			DeviceID:  st.DeviceID,
 			SSRC:      st.SSRC,
-			State:     string(st.State),
+			State:     string(st.State()),
 			StartedAt: st.StartedAt.UTC().Format(time.RFC3339),
 		}
 		if stats, ok := s.rtp.StreamStats(st.StreamID); ok {
@@ -328,7 +328,7 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 			"stream_id": streamID,
 			"ssrc":      ssrc,
 			"port":      port,
-			"state":     string(st.State),
+			"state":     string(st.State()),
 		}, nil
 	case *control.Error:
 		// Device rejected
@@ -353,8 +353,8 @@ func (s *Server) StopStream(ctx context.Context, streamID string) error {
 	}
 
 	// Must be ACTIVE to stop
-	if st.State != stream.StateActive {
-		return fmt.Errorf("stream %s not active (state=%s)", streamID, st.State)
+	if st.State() != stream.StateActive {
+		return fmt.Errorf("stream %s not active (state=%s)", streamID, st.State())
 	}
 
 	_ = st.StopRequested()

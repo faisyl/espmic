@@ -49,18 +49,21 @@ const (
 // All transitions go through the §17 lifecycle; timestamps track the RTP_WAIT
 // and ACTIVE timeouts. Access is guarded by the owning Registry; the Stream
 // methods take an injected clock (now) for deterministic testing.
+// Concurrency: all state mutations and reads are guarded by an internal RWMutex.
+// State reads use State() accessor; internal methods hold Lock/RLock as needed.
 type Stream struct {
-	StreamID  string
-	DeviceID  string
-	SSRC      uint32
-	State     StreamState
-	StartedAt time.Time
-	Reason    FailureReason
+	StreamID        string
+	DeviceID        string
+	SSRC            uint32
+	state           StreamState // private; use State() accessor
+	StartedAt       time.Time
+	Reason          FailureReason
 
 	streamStartedAt time.Time // when device sent stream_started (RTP_WAIT clock)
 	lastPacketAt    time.Time // last RTP packet in ACTIVE (RTP_TIMEOUT clock)
 
 	cfg TimeoutConfig
+	mu  sync.RWMutex
 }
 
 // TimeoutConfig holds per-stream lifecycle deadlines (spec §17 "all values
@@ -84,13 +87,20 @@ func (c TimeoutConfig) disappear() time.Duration {
 	return DefaultRTPDisappearTimeout
 }
 
+// State returns the current stream state (thread-safe accessor).
+func (s *Stream) State() StreamState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state
+}
+
 // New returns a Stream in CREATED.
 func New(id, deviceID string, ssrc uint32, startedAt time.Time) *Stream {
 	return &Stream{
 		StreamID:  id,
 		DeviceID:  deviceID,
 		SSRC:      ssrc,
-		State:     StateCreated,
+		state:     StateCreated,
 		StartedAt: startedAt,
 		cfg:       TimeoutConfig{},
 	}
@@ -104,10 +114,12 @@ func (s *Stream) WithTimeoutConfig(cfg TimeoutConfig) *Stream {
 
 // Start transitions CREATED -> WAITING_FOR_DEVICE (spec §17).
 func (s *Stream) Start(now time.Time) error {
-	if s.State != StateCreated {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateCreated {
 		return ErrIllegalTransition
 	}
-	s.State = StateWaitingForDevice
+	s.state = StateWaitingForDevice
 	s.StartedAt = now
 	return nil
 }
@@ -117,22 +129,26 @@ func (s *Stream) Start(now time.Time) error {
 // state so a stream can be started directly or via the WAITING_FOR_DEVICE
 // intermediate.
 func (s *Stream) DeviceCommandSent() error {
-	if s.State != StateCreated && s.State != StateWaitingForDevice {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateCreated && s.state != StateWaitingForDevice {
 		return ErrIllegalTransition
 	}
-	s.State = StateStarting
+	s.state = StateStarting
 	return nil
 }
 
 // DeviceRejected transitions STARTING -> FAILED (device declined/nack).
 func (s *Stream) DeviceRejected(reason FailureReason) error {
-	if s.State != StateStarting {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateStarting {
 		return ErrIllegalTransition
 	}
 	if reason == FailureNone {
 		reason = FailureStartRejected
 	}
-	s.State = StateFailed
+	s.state = StateFailed
 	s.Reason = reason
 	return nil
 }
@@ -140,20 +156,24 @@ func (s *Stream) DeviceRejected(reason FailureReason) error {
 // StreamStarted transitions STARTING -> RTP_WAIT and starts the 5s deadline
 // (spec §17: TIMEOUT edge RTP_WAIT->TIMEOUT@5s after stream_started).
 func (s *Stream) StreamStarted(now time.Time) error {
-	if s.State != StateStarting {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateStarting {
 		return ErrIllegalTransition
 	}
-	s.State = StateRTPWait
+	s.state = StateRTPWait
 	s.streamStartedAt = now
 	return nil
 }
 
 // FirstPacket transitions RTP_WAIT -> ACTIVE on the first RTP packet (spec §17).
 func (s *Stream) FirstPacket(now time.Time) error {
-	if s.State != StateRTPWait {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateRTPWait {
 		return ErrIllegalTransition
 	}
-	s.State = StateActive
+	s.state = StateActive
 	s.lastPacketAt = now
 	return nil
 }
@@ -161,7 +181,9 @@ func (s *Stream) FirstPacket(now time.Time) error {
 // Packet refreshes the RTP disappearance clock in ACTIVE (spec §17: ~1s without
 // a packet => RTP_TIMEOUT).
 func (s *Stream) Packet(now time.Time) {
-	if s.State != StateActive {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateActive {
 		return
 	}
 	s.lastPacketAt = now
@@ -170,7 +192,9 @@ func (s *Stream) Packet(now time.Time) {
 // RTPWaitTimedOut reports whether the RTP_WAIT->TIMEOUT deadline has elapsed
 // (spec §17). Only meaningful in RTP_WAIT.
 func (s *Stream) RTPWaitTimedOut(now time.Time) bool {
-	if s.State != StateRTPWait {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.state != StateRTPWait {
 		return false
 	}
 	return now.Sub(s.streamStartedAt) >= s.cfg.wait()
@@ -179,7 +203,9 @@ func (s *Stream) RTPWaitTimedOut(now time.Time) bool {
 // RTPDisappeared reports whether the ACTIVE->RTP_TIMEOUT deadline has elapsed
 // (~1s without packets, spec §17). Only meaningful in ACTIVE.
 func (s *Stream) RTPDisappeared(now time.Time) bool {
-	if s.State != StateActive {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.state != StateActive {
 		return false
 	}
 	return now.Sub(s.lastPacketAt) >= s.cfg.disappear()
@@ -187,38 +213,46 @@ func (s *Stream) RTPDisappeared(now time.Time) bool {
 
 // StopRequested transitions ACTIVE -> STOPPING (server issued stop_stream).
 func (s *Stream) StopRequested() error {
-	if s.State != StateActive {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateActive {
 		return ErrIllegalTransition
 	}
-	s.State = StateStopping
+	s.state = StateStopping
 	return nil
 }
 
 // Stopped transitions STOPPING -> COMPLETE (device sent stream_stopped).
 func (s *Stream) Stopped() error {
-	if s.State != StateStopping {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateStopping {
 		return ErrIllegalTransition
 	}
-	s.State = StateComplete
+	s.state = StateComplete
 	return nil
 }
 
 // DeviceDisconnected transitions ACTIVE -> DEVICE_DISCONNECTED (spec §17).
 func (s *Stream) DeviceDisconnected() error {
-	if s.State != StateActive {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateActive {
 		return ErrIllegalTransition
 	}
-	s.State = StateFailed
+	s.state = StateFailed
 	s.Reason = FailureDeviceDisc
 	return nil
 }
 
 // DecodeError transitions ACTIVE -> DECODE_ERROR (spec §17).
 func (s *Stream) DecodeError() error {
-	if s.State != StateActive {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateActive {
 		return ErrIllegalTransition
 	}
-	s.State = StateFailed
+	s.state = StateFailed
 	s.Reason = FailureDecodeError
 	return nil
 }
