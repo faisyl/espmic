@@ -220,6 +220,21 @@ docker compose up --build        # from this directory
 curl localhost:8080/health       # -> {"status":"ok","version":"dev"}
 ```
 
+### TLS auto-provisioning (compose)
+
+The compose stack sets `ESPMIC_TLS_CERT=/data/certs/cert.pem` and
+`ESPMIC_TLS_KEY=/data/certs/key.pem` on the persistent `espmic-data` volume.
+On first start, if either file is missing, the container entrypoint generates
+a self-signed pair (RSA 2048, 10-year, CN `espmic.local`) before exec'ing the
+server — so the control plane comes up with working TLS out of the box. On
+restart the same pair is reused (no regeneration).
+
+To supply your own certificate, mount real `cert.pem`/`key.pem` at those paths
+(bind mount or pre-populated volume); the entrypoint skips generation when both
+files already exist. The client connects with verification skipped (LAN mode).
+
+Override the CN via `ESPMIC_TLS_CN` (default `espmic.local`).
+
 **RTP UDP ingest** uses one dynamic UDP port per managed stream (spec §17), so
 it cannot be reached through the TCP `ports:` mapping above. The compose file
 documents the two options — host networking or a mapped UDP range — with a

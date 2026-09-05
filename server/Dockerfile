@@ -12,11 +12,13 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/espmic-server ./cmd/server
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata openssl \
     && addgroup -S espmic && adduser -S -G espmic espmic
 
 WORKDIR /app
 COPY --from=builder /out/espmic-server /app/espmic-server
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 
 # Runtime data: SQLite DB (ESPMIC_DB_PATH) + recordings.
 RUN mkdir -p /data/recordings && chown -R espmic:espmic /data
@@ -34,4 +36,4 @@ ENV ESPMIC_HTTP_ADDR=":8080" \
     ESPMIC_CONTROL_ADDR=":9000" \
     ESPMIC_DB_PATH="/data/espmic.db"
 
-ENTRYPOINT ["/app/espmic-server"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
