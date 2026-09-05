@@ -100,14 +100,14 @@ type Destination struct {
 
 // Codec holds the codec configuration for the stream (spec §11).
 type Codec struct {
-	Name       string `json:"name"`         // "opus"
-	SampleRate int    `json:"sample_rate"`  // 48000
-	Channels   int    `json:"channels"`     // 2
-	FrameMS    int    `json:"frame_ms"`     // 20
-	Bitrate    int    `json:"bitrate"`      // e.g. 128000
-	VBR        bool   `json:"vbr"`          // true
-	FEC        bool   `json:"fec"`          // false
-	DTX        bool   `json:"dtx"`          // false
+	Name       string `json:"name"`        // "opus"
+	SampleRate int    `json:"sample_rate"` // 48000
+	Channels   int    `json:"channels"`    // 2
+	FrameMS    int    `json:"frame_ms"`    // 20
+	Bitrate    int    `json:"bitrate"`     // e.g. 128000
+	VBR        bool   `json:"vbr"`         // true
+	FEC        bool   `json:"fec"`         // false
+	DTX        bool   `json:"dtx"`         // false
 }
 
 // RTPConfig holds the RTP payload type (spec §11).
@@ -117,13 +117,13 @@ type RTPConfig struct {
 
 // StartStream requests a device to begin RTP (server -> device) per spec §11.
 type StartStream struct {
-	Type         string      `json:"type"`
-	RequestID    string      `json:"request_id"`
-	StreamID     string      `json:"stream_id"`
-	SSRC         uint32      `json:"ssrc"`
-	Destination  Destination `json:"destination"`
-	Codec        Codec       `json:"codec"`
-	RTP          RTPConfig   `json:"rtp"`
+	Type        string      `json:"type"`
+	RequestID   string      `json:"request_id"`
+	StreamID    string      `json:"stream_id"`
+	SSRC        uint32      `json:"ssrc"`
+	Destination Destination `json:"destination"`
+	Codec       Codec       `json:"codec"`
+	RTP         RTPConfig   `json:"rtp"`
 }
 
 func NewStartStream(requestID, streamID string, ssrc uint32, dest Destination, codec Codec, rtp RTPConfig) *StartStream {

@@ -13,7 +13,7 @@ import (
 func TestSetConfigRoundtrip(t *testing.T) {
 	pin := 12
 	host := "audio.internal"
- bitrate := 128000
+	bitrate := 128000
 	req := NewSetConfig("req-01")
 	req.DefaultBitrate = &bitrate
 	req.ServerHost = &host

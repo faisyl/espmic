@@ -227,7 +227,7 @@ func TestDecodePayloadMalformedJSON(t *testing.T) {
 func TestDecodeHelloWithCapabilitiesObject(t *testing.T) {
 	// Exact client hello JSON from spec (client/ESP32_Audio_Device_Specification.md line 237)
 	clientHello := `{"type":"hello","device_id":"esp32-001","credential":"token123","firmware":"v1.2.3","capabilities":{"sample_rates":[48000],"channels":2,"codecs":["opus"],"psram":true}}`
-	
+
 	msg, err := DecodePayload([]byte(clientHello))
 	if err != nil {
 		t.Fatalf("DecodePayload failed on real client hello: %v", err)
@@ -260,7 +260,7 @@ func TestDecodeHelloWithCapabilitiesObject(t *testing.T) {
 	if !hello.Capabilities.PSRAM {
 		t.Fatalf("psram = %v, want true", hello.Capabilities.PSRAM)
 	}
-	
+
 	// Verify round-trip encode/decode
 	payload, err := Encode(hello)
 	if err != nil {

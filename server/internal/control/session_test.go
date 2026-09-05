@@ -16,13 +16,13 @@ import (
 // streaming frame reader; reads pull framed messages from a channel. This
 // coalesces multi-Write frames and is race-free.
 type chanConn struct {
-	readCh       chan []byte // test -> session: framed messages to deliver
-	mu           sync.Mutex
-	writeBuf     []byte
-	writeOffset  int    // bytes already pushed to fr (avoids duplicate frame reads)
-	writeSig     chan struct{}
-	closed       chan struct{}
-	fr           *FrameReader
+	readCh      chan []byte // test -> session: framed messages to deliver
+	mu          sync.Mutex
+	writeBuf    []byte
+	writeOffset int // bytes already pushed to fr (avoids duplicate frame reads)
+	writeSig    chan struct{}
+	closed      chan struct{}
+	fr          *FrameReader
 }
 
 func newChanConn() *chanConn {

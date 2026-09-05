@@ -18,17 +18,17 @@ import (
 // PushConfig behavior is programmable so handler tests can cover success,
 // rejection, offline, and timeout.
 type fakeSrv struct {
-	pushMsg    control.Message
-	pushErr    error
-	pushCfg    control.SetConfig
-	pushDev    string
-	pushCall   bool
-	streams    interface{}
-	startMsg   map[string]any
-	startErr   error
-	startCall  bool
-	stopErr    error
-	stopCall   bool
+	pushMsg   control.Message
+	pushErr   error
+	pushCfg   control.SetConfig
+	pushDev   string
+	pushCall  bool
+	streams   interface{}
+	startMsg  map[string]any
+	startErr  error
+	startCall bool
+	stopErr   error
+	stopCall  bool
 }
 
 func (f *fakeSrv) DeviceList() interface{}     { return []string{"d1"} }
@@ -298,13 +298,13 @@ func TestConfigEndpointPartialFields(t *testing.T) {
 // TestStartStreamEndpoint exercises POST /api/devices/{id}/stream.
 func TestStartStreamEndpoint(t *testing.T) {
 	cases := []struct {
-		name      string
-		deviceID  string
-		body      string
-		startMsg  map[string]any
-		startErr  error
-		wantCode  int
-		wantBody  string
+		name     string
+		deviceID string
+		body     string
+		startMsg map[string]any
+		startErr error
+		wantCode int
+		wantBody string
 	}{
 		{
 			name:     "success returns stream info",
@@ -370,11 +370,11 @@ func TestStartStreamEndpoint(t *testing.T) {
 // TestStopStreamEndpoint exercises DELETE /api/streams/{id}.
 func TestStopStreamEndpoint(t *testing.T) {
 	cases := []struct {
-		name      string
-		streamID  string
-		stopErr   error
-		wantCode  int
-		wantBody  string
+		name     string
+		streamID string
+		stopErr  error
+		wantCode int
+		wantBody string
 	}{
 		{
 			name:     "success returns stopped",
