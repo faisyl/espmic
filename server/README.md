@@ -59,6 +59,7 @@ Configuration is loaded from environment variables with sensible local defaults 
 | `ESPMIC_CONTROL_ADDR` | `:9000` | string | Control channel TCP/TLS listen address for client devices |
 | `ESPMIC_TLS_CERT` | `""` | string | Path to PEM certificate for TLS control plane (empty = plain TCP) |
 | `ESPMIC_TLS_KEY` | `""` | string | Path to PEM private key for TLS control plane (empty = plain TCP) |
+| `ESPMIC_DEVICE_CREDENTIAL` | `""` | string | Shared secret for device enrollment. Empty = open enrollment (LAN default, TOFU). Non-empty = device must present this credential in hello message (constant-time compare). |
 | `ESPMIC_JITTER_TARGET_MS` | `60` | int | Target playout delay for jitter buffer in milliseconds |
 | `ESPMIC_RTP_WAIT_TIMEOUT_S` | `5` | int | Timeout in seconds waiting for RTP packets post stream start |
 | `ESPMIC_DB_PATH` | `espmic.db` | string | Path to SQLite database file |
@@ -234,6 +235,32 @@ To supply your own certificate, mount real `cert.pem`/`key.pem` at those paths
 files already exist. The client connects with verification skipped (LAN mode).
 
 Override the CN via `ESPMIC_TLS_CN` (default `espmic.local`).
+
+### Device enrollment (control plane)
+
+Devices authenticate via a `hello` message on the control connection (spec §7).
+The server supports two enrollment modes via `ESPMIC_DEVICE_CREDENTIAL`:
+
+| Mode | `ESPMIC_DEVICE_CREDENTIAL` | Behavior |
+|---|---|---|
+| **Open (TOFU, default)** | empty (default) | First hello from an unknown device is accepted and the device is enrolled automatically (trust-on-first-use). Subsequent hellos from the same device ID are accepted. No credential required. Suitable for trusted LANs. |
+| **Credential-gated** | non-empty string | Device must present the exact credential in its `hello.credential` field. Comparison uses `crypto/subtle.ConstantTimeCompare`. Unknown devices with correct credential are enrolled (TOFU). Wrong/empty credential → connection closed with `auth failed`. |
+
+After enrollment, the device appears in `GET /api/devices` and the dashboard DEVICES panel.
+
+**Example (open LAN):**
+```sh
+# Default — no credential needed
+ESPMIC_TLS_CERT=/data/certs/cert.pem ESPMIC_TLS_KEY=/data/certs/key.pem ./espmic-server
+```
+
+**Example (credential-gated):**
+```sh
+ESPMIC_DEVICE_CREDENTIAL="super-secret-token" \
+ESPMIC_TLS_CERT=/data/certs/cert.pem ESPMIC_TLS_KEY=/data/certs/key.pem \
+./espmic-server
+```
+Device hello must include `{"type":"hello","device_id":"esp32-001","credential":"super-secret-token"}`.
 
 **RTP UDP ingest** uses one dynamic UDP port per managed stream (spec §17), so
 it cannot be reached through the TCP `ports:` mapping above. The compose file

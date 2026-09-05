@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"database/sql"
 	"log"
@@ -130,8 +131,30 @@ func (s *Server) controlLoop(ln net.Listener) {
 }
 
 // Authenticate implements control.Authenticator (spec §7, §19).
+// Trust-on-first-use (TOFU) enrollment with optional shared credential:
+// - If cfg.DeviceCredential is set, the presented credential must match it
+//   (constant-time compare). Mismatch => auth error.
+// - Then: if device exists, accept; if not, register it (TOFU) and accept.
+// - Log first-time enrollments.
 func (s *Server) Authenticate(ctx context.Context, deviceID, credential string) error {
+	if s.cfg.DeviceCredential != "" {
+		if subtle.ConstantTimeCompare([]byte(credential), []byte(s.cfg.DeviceCredential)) != 1 {
+			return device.ErrAuthFailed
+		}
+	}
 	_, err := s.device.Get(deviceID)
+	if err == device.ErrDeviceNotFound {
+		d := device.Device{
+			DeviceID:    deviceID,
+			DisplayName: deviceID,
+			Status:      "online",
+		}
+		// No credential hash stored for TOFU enrollment (credential is
+		// validated against the shared secret if configured; otherwise open).
+		s.device.Register(d, nil)
+		log.Printf("control: enrolled new device %q (TOFU)", deviceID)
+		return nil
+	}
 	return err
 }
 
