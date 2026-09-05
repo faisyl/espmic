@@ -2,6 +2,11 @@
 # Multi-stage build: static pure-Go binary (no cgo) -> minimal Alpine runtime,
 # non-root. The stack already has zero cgo, so CGO_ENABLED=0 gives a static
 # binary that runs on a scratch/distroless-grade image.
+# Build args for version stamping (match .goreleaser.yaml -X paths: main.version, main.commit, main.date)
+ARG BUILD_VERSION=dev
+ARG GIT_COMMIT=none
+ARG BUILD_DATE=unknown
+
 FROM golang:1.26 AS builder
 WORKDIR /src
 
@@ -9,7 +14,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/espmic-server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags="-s -w -X main.version=${BUILD_VERSION} -X main.commit=${GIT_COMMIT} -X main.date=${BUILD_DATE}" \
+    -o /out/espmic-server ./cmd/server
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata openssl \

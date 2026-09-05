@@ -88,6 +88,10 @@ ESPMIC_HTTP_ADDR=:8080 ESPMIC_CONTROL_ADDR=:9000 ./espmic-server
 
 ```sh
 go run ./cmd/server
+# defaults: HTTP :8080, control :9000; override via env vars
+curl localhost:8080/health          # -> {"status":"ok","version":"dev","commit":"none","date":"unknown"}
+curl localhost:8080/api/metrics     # -> {statistics snapshot}
+curl localhost:8080/api/devices     # -> [device list]
 ```
 
 ### Option 3: Docker Compose
@@ -119,6 +123,58 @@ At startup, `espmic-server` logs these build variables, and the `GET /health` en
   "version": "v0.4.6"
 }
 ```
+
+## Version stamping (build identity)
+
+The binary exposes its build identity via `GET /health`:
+
+```json
+{
+  "status": "ok",
+  "version": "v0.4.6",
+  "commit": "a1b2c3d",
+  "date": "2026-09-05T12:34:56Z"
+}
+```
+
+These come from three package-level variables in `cmd/server/main.go`:
+`version`, `commit`, `date` — set at link time via `-X` ldflags (matching
+GoReleaser's `.goreleaser.yaml`):
+
+```
+-X main.version=... -X main.commit=... -X main.date=...
+```
+
+### Local binary build (stamped)
+
+```sh
+make build
+# or manually:
+CGO_ENABLED=0 go build -trimpath \
+  -ldflags="-X main.version=dev -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -o espmic-server ./cmd/server
+```
+
+### Docker compose build (stamped)
+
+The `Dockerfile` accepts `BUILD_VERSION`, `GIT_COMMIT`, `BUILD_DATE` build args
+and passes them via `-ldflags`. The `docker-compose.yml` forwards them from the
+environment.
+
+```sh
+# One-liner (stamps current git commit + UTC timestamp):
+make docker-build-dev
+
+# Or explicitly:
+make docker-build GIT_COMMIT=$(git rev-parse --short HEAD) BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Then run:
+docker compose up
+curl localhost:8080/health   # -> {"status":"ok","version":"dev","commit":"a1b2c3d","date":"2026-09-05T12:34:56Z"}
+```
+
+The published `ghcr.io/faisyl/espmic-server` images are stamped by GoReleaser at
+release time (see `.goreleaser.yaml`).
 
 ## API (spec §15)
 

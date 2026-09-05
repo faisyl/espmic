@@ -41,6 +41,8 @@ func main() {
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux, cfg, srv)
 	api.SetVersion(version)
+	api.SetCommit(commit)
+	api.SetDate(date)
 	// WebSocket live PCM output at /api/live (spec §14)
 	mux.Handle("GET /api/live", audio.HandleLive(srv.PCMBus()))
 	// Static dashboard assets (Pam's UI) at /

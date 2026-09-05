@@ -59,9 +59,17 @@ func TestHealth(t *testing.T) {
 	if body["version"] != "dev" {
 		t.Fatalf("GET /health version = %q, want %q (default before SetVersion)", body["version"], "dev")
 	}
+	if body["commit"] != "none" {
+		t.Fatalf("GET /health commit = %q, want %q (default before SetCommit)", body["commit"], "none")
+	}
+	if body["date"] != "unknown" {
+		t.Fatalf("GET /health date = %q, want %q (default before SetDate)", body["date"], "unknown")
+	}
 
-	// SetVersion is reflected on /health.
+	// SetVersion/SetCommit/SetDate are reflected on /health.
 	SetVersion("v9.9.9-test")
+	SetCommit("abc1234")
+	SetDate("2026-09-05T12:34:56Z")
 	rec2 := httptest.NewRecorder()
 	mux.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/health", nil))
 	if err := json.Unmarshal(rec2.Body.Bytes(), &body); err != nil {
@@ -69,6 +77,12 @@ func TestHealth(t *testing.T) {
 	}
 	if body["version"] != "v9.9.9-test" {
 		t.Fatalf("after SetVersion, /health version = %q, want v9.9.9-test", body["version"])
+	}
+	if body["commit"] != "abc1234" {
+		t.Fatalf("after SetCommit, /health commit = %q, want abc1234", body["commit"])
+	}
+	if body["date"] != "2026-09-05T12:34:56Z" {
+		t.Fatalf("after SetDate, /health date = %q, want 2026-09-05T12:34:56Z", body["date"])
 	}
 }
 

@@ -32,12 +32,22 @@ type Handlers struct {
 	srv Server
 }
 
-// serverVersion is the build-time version string (injected from cmd/server
-// via SetVersion); surfaced on /health.
-var serverVersion = "dev"
+// Build-time stamped values (set via -X ldflags in .goreleaser.yaml / Dockerfile).
+// Defaults are dev/none/unknown.
+var (
+	serverVersion = "dev"
+	serverCommit  = "none"
+	serverDate    = "unknown"
+)
 
 // SetVersion records the build-time version for the /health endpoint.
 func SetVersion(v string) { serverVersion = v }
+
+// SetCommit records the build-time git commit for the /health endpoint.
+func SetCommit(c string) { serverCommit = c }
+
+// SetDate records the build-time date for the /health endpoint.
+func SetDate(d string) { serverDate = d }
 
 // NewHandlers returns handlers bound to the server.
 func NewHandlers(srv Server) *Handlers { return &Handlers{srv: srv} }
@@ -60,7 +70,12 @@ func RegisterRoutes(mux *http.ServeMux, cfg *config.Config, srv Server) {
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": serverVersion})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"version": serverVersion,
+		"commit":  serverCommit,
+		"date":    serverDate,
+	})
 }
 
 func (h *Handlers) handleDevices(w http.ResponseWriter, _ *http.Request) {

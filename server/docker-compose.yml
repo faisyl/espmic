@@ -5,7 +5,12 @@
 services:
   server:
     image: ghcr.io/faisyl/espmic-server:latest
-    build: .
+    build:
+      context: .
+      args:
+        BUILD_VERSION: "dev"
+        GIT_COMMIT: "${GIT_COMMIT:-dev}"
+        BUILD_DATE: "${BUILD_DATE:-unknown}"
     restart: unless-stopped
     environment:
       # All tunables (source of truth: internal/config/config.go):
