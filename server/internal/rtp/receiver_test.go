@@ -38,7 +38,7 @@ func sendPacket(t *testing.T, addr *net.UDPAddr, raw []byte) {
 
 func TestReceiverBindCreatesPort(t *testing.T) {
 	r := NewReceiver(metrics.New())
-	port, err := r.Bind(context.Background(), "s1", DefaultPayloadType)
+	port, err := r.Bind(context.Background(), "s1", DefaultPayloadType, 60*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -54,18 +54,18 @@ func TestReceiverBindCreatesPort(t *testing.T) {
 
 func TestReceiverDuplicateBind(t *testing.T) {
 	r := NewReceiver(metrics.New())
-	if _, err := r.Bind(context.Background(), "s1", DefaultPayloadType); err != nil {
+	if _, err := r.Bind(context.Background(), "s1", DefaultPayloadType, 60*time.Millisecond); err != nil {
 		t.Fatalf("first bind: %v", err)
 	}
 	defer r.CloseStream("s1")
-	if _, err := r.Bind(context.Background(), "s1", DefaultPayloadType); err == nil {
+	if _, err := r.Bind(context.Background(), "s1", DefaultPayloadType, 60*time.Millisecond); err == nil {
 		t.Fatal("expected error on duplicate bind")
 	}
 }
 
 func TestReceiverAcceptsValidPacket(t *testing.T) {
 	r := NewReceiver(metrics.New())
-	port, err := r.Bind(context.Background(), "s1", DefaultPayloadType)
+	port, err := r.Bind(context.Background(), "s1", DefaultPayloadType, 60*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestReceiverLearnsFirstSSRCAndRejectsForeign(t *testing.T) {
 	// first valid packet, accepts that stream, and rejects any foreign SSRC
 	// arriving on the same port thereafter.
 	r := NewReceiver(metrics.New())
-	port, err := r.Bind(context.Background(), "s1", DefaultPayloadType)
+	port, err := r.Bind(context.Background(), "s1", DefaultPayloadType, 60*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestReceiverLearnsFirstSSRCAndRejectsForeign(t *testing.T) {
 }
 func TestReceiverIgnoresWrongPT(t *testing.T) {
 	r := NewReceiver(metrics.New())
-	port, err := r.Bind(context.Background(), "s1", DefaultPayloadType)
+	port, err := r.Bind(context.Background(), "s1", DefaultPayloadType, 60*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestReceiverIgnoresWrongPT(t *testing.T) {
 
 func TestReceiverIgnoresMalformed(t *testing.T) {
 	r := NewReceiver(metrics.New())
-	port, err := r.Bind(context.Background(), "s1", DefaultPayloadType)
+	port, err := r.Bind(context.Background(), "s1", DefaultPayloadType, 60*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestReceiverIgnoresMalformed(t *testing.T) {
 
 func TestReceiverCloseStream(t *testing.T) {
 	r := NewReceiver(metrics.New())
-	if _, err := r.Bind(context.Background(), "s1", DefaultPayloadType); err != nil {
+	if _, err := r.Bind(context.Background(), "s1", DefaultPayloadType, 60*time.Millisecond); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	r.CloseStream("s1")

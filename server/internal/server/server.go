@@ -325,7 +325,7 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 	requestID := newRequestID()
 
 	// Bind RTP port
-	port, err := s.rtp.Bind(ctx, streamID, rtp.DefaultPayloadType)
+	port, err := s.rtp.Bind(ctx, streamID, rtp.DefaultPayloadType, time.Duration(s.cfg.JitterTargetMS)*time.Millisecond)
 	if err != nil {
 		return nil, fmt.Errorf("bind RTP: %w", err)
 	}

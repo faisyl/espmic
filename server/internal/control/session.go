@@ -37,6 +37,10 @@ type Session struct {
 	deviceID   string
 	registered bool
 
+	pingSeq      uint32
+	lastPongSeq  uint32
+	pongReceived bool
+
 	onReady func(*Session)
 	onClose func(*Session)
 }
@@ -62,6 +66,17 @@ func (s *Session) ID() string { return s.id }
 
 // DeviceID returns the authenticated device id (empty before).
 func (s *Session) DeviceID() string { return s.deviceID }
+
+// LastPongSeq returns the most recent pong seq echoed by the device and
+// whether any pong has been received yet (spec §10 correlation).
+func (s *Session) LastPongSeq() (uint32, bool) {
+	return s.lastPongSeq, s.pongReceived
+}
+
+// PingSeq returns the last ping seq the server sent (spec §10 correlation).
+func (s *Session) PingSeq() uint32 {
+	return s.pingSeq
+}
 
 // SetOnMsg sets the inbound-message handler invoked for each decoded message
 // after hello_ack. It must be called before Run; it lets the caller wire a
@@ -123,7 +138,7 @@ func (s *Session) Run(ctx context.Context) error {
 	s.deviceID = hello.DeviceID
 	s.registered = true
 
-	if err := s.writeMsg(NewHelloAck(s.id, s.deviceID)); err != nil {
+	if err := s.writeMsg(NewHelloAck(s.id, s.deviceID, s.now().UnixMilli())); err != nil {
 		return fmt.Errorf("control: write hello_ack: %w", err)
 	}
 
@@ -147,7 +162,8 @@ func (s *Session) Run(ctx context.Context) error {
 			}
 			return err
 		case <-hb.C:
-			if err := s.writeMsg(NewPing(0)); err != nil {
+			s.pingSeq++
+			if err := s.writeMsg(NewPing(s.pingSeq)); err != nil {
 				return fmt.Errorf("control: heartbeat ping: %w", err)
 			}
 		}
@@ -174,6 +190,12 @@ func (s *Session) readLoop(ctx context.Context, errCh chan<- error) {
 		// Auto-reply to Ping with Pong (keepalive, spec §7).
 		if ping, ok := msg.(*Ping); ok {
 			_ = s.writeMsg(NewPong(ping.Seq))
+			continue
+		}
+		// Track the last pong seq the device echoes back (spec §10 correlation).
+		if pong, ok := msg.(*Pong); ok {
+			s.lastPongSeq = pong.Seq
+			s.pongReceived = true
 			continue
 		}
 		if s.onMsg != nil {

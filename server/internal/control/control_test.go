@@ -140,7 +140,7 @@ func TestMessagesRoundtrip(t *testing.T) {
 		msg  Message
 	}{
 		{"hello", NewHello("esp32-001", "secret", "1.2.3", &Capabilities{Codecs: []string{"opus"}})},
-		{"hello_ack", NewHelloAck("sess-1", "esp32-001")},
+		{"hello_ack", NewHelloAck("sess-1", "esp32-001", 1700000000000)},
 		{"ping", NewPing(5)},
 		{"pong", NewPong(5)},
 		{"start_stream", NewStartStream("req-1", "uuid",
@@ -297,5 +297,83 @@ func TestDecodeStreamStoppedStats(t *testing.T) {
 	}
 	if ss.Stats.PacketsSent != 100 || ss.Stats.BytesSent != 2000 || ss.Stats.DurationMS != 5000 || ss.Stats.EncoderErrors != 2 {
 		t.Fatalf("unexpected stats: %+v", ss.Stats)
+	}
+}
+
+func TestHelloAckServerTimeMsRoundtrip(t *testing.T) {
+	ack := NewHelloAck("sess-1", "esp32-001", 1700000000000)
+	payload, err := Encode(ack)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	got, err := DecodePayload(payload)
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	ack2, ok := got.(*HelloAck)
+	if !ok {
+		t.Fatalf("type = %T, want *HelloAck", got)
+	}
+	if ack2.ServerTimeMs != 1700000000000 {
+		t.Fatalf("server_time_ms = %d, want 1700000000000", ack2.ServerTimeMs)
+	}
+	if ack2.SessionID != "sess-1" || ack2.DeviceID != "esp32-001" {
+		t.Fatalf("lost session/device id: %+v", ack2)
+	}
+}
+
+func TestHelloProtocolRoundtrip(t *testing.T) {
+	hello := NewHello("esp32-001", "secret", "1.2.3", nil)
+	hello.Protocol = 1
+	payload, err := Encode(hello)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	got, err := DecodePayload(payload)
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	hello2, ok := got.(*Hello)
+	if !ok {
+		t.Fatalf("type = %T, want *Hello", got)
+	}
+	if hello2.Protocol != 1 {
+		t.Fatalf("protocol = %d, want 1", hello2.Protocol)
+	}
+}
+
+func TestErrorCodeStringDecode(t *testing.T) {
+	// Device sends string error codes (e.g. "invalid_config") — verify the
+	// ErrorCode custom type decodes them (spec §10).
+	jsonPayload := `{"type":"error","code":"invalid_config","message":"bad config"}`
+	msg, err := DecodePayload([]byte(jsonPayload))
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	e, ok := msg.(*Error)
+	if !ok {
+		t.Fatalf("type = %T, want *Error", msg)
+	}
+	if e.Code != "invalid_config" {
+		t.Fatalf("code = %q, want invalid_config", e.Code)
+	}
+	if e.Message != "bad config" {
+		t.Fatalf("message = %q, want bad config", e.Message)
+	}
+}
+
+func TestErrorCodeIntDecode(t *testing.T) {
+	// Legacy server integer codes still decode (spec §10).
+	jsonPayload := `{"type":"error","code":7,"message":"boom"}`
+	msg, err := DecodePayload([]byte(jsonPayload))
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	e, ok := msg.(*Error)
+	if !ok {
+		t.Fatalf("type = %T, want *Error", msg)
+	}
+	if e.Code != "7" {
+		t.Fatalf("code = %q, want 7", e.Code)
 	}
 }

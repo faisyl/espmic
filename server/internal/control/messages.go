@@ -51,6 +51,7 @@ type Hello struct {
 	Credential   string        `json:"credential,omitempty"`
 	Firmware     string        `json:"firmware,omitempty"`
 	Capabilities *Capabilities `json:"capabilities,omitempty"`
+	Protocol     int           `json:"protocol,omitempty"`
 }
 
 func NewHello(deviceID, credential, firmware string, capabilities *Capabilities) *Hello {
@@ -61,13 +62,14 @@ func (m *Hello) Kind() string { return TypeHello }
 
 // HelloAck acknowledges authentication/session establishment (server -> device).
 type HelloAck struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	DeviceID  string `json:"device_id"`
+	Type         string `json:"type"`
+	SessionID    string `json:"session_id"`
+	DeviceID     string `json:"device_id"`
+	ServerTimeMs int64  `json:"server_time_ms"`
 }
 
-func NewHelloAck(sessionID, deviceID string) *HelloAck {
-	return &HelloAck{Type: TypeHelloAck, SessionID: sessionID, DeviceID: deviceID}
+func NewHelloAck(sessionID, deviceID string, serverTimeMs int64) *HelloAck {
+	return &HelloAck{Type: TypeHelloAck, SessionID: sessionID, DeviceID: deviceID, ServerTimeMs: serverTimeMs}
 }
 
 func (m *HelloAck) Kind() string { return TypeHelloAck }

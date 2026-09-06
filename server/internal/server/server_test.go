@@ -212,7 +212,7 @@ func TestAudioPipelineEndToEnd(t *testing.T) {
 	// Bind RTP directly (bypass control handshake per god refinement #2)
 	streamID := "test-stream"
 	ssrc := uint32(0x12345678)
-	_, err = srv.rtp.Bind(ctx, streamID, 111)
+	_, err = srv.rtp.Bind(ctx, streamID, 111, 60*time.Millisecond)
 	if err != nil {
 		t.Fatalf("bind RTP: %v", err)
 	}
@@ -537,7 +537,7 @@ func TestStopStreamConsumesAndPersistsStats(t *testing.T) {
 	srv.stream.Add(st)
 
 	// Bind RTP dummy port
-	_, _ = srv.rtp.Bind(context.Background(), streamID, 111)
+	_, _ = srv.rtp.Bind(context.Background(), streamID, 111, 60*time.Millisecond)
 
 	// Device routine to handle stop_stream and reply with StreamStopped carrying stats
 	stopHandled := make(chan struct{})

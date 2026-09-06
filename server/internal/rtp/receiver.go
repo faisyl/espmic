@@ -59,7 +59,9 @@ func NewReceiver(m *metrics.Metrics) *Receiver {
 // Bind allocates a UDP port for streamID and starts a read goroutine
 // (spec §9: one UDP port per active stream). pt is uint8 (the RTP payload
 // type field width). Both are validated on every packet (spec §19).
-func (r *Receiver) Bind(ctx context.Context, streamID string, pt uint8) (uint16, error) {
+// jitterTarget sets the target playout delay for the jitter buffer; when zero
+// it defaults to 60ms (spec §11).
+func (r *Receiver) Bind(ctx context.Context, streamID string, pt uint8, jitterTarget time.Duration) (uint16, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.streams[streamID]; ok {
@@ -70,6 +72,9 @@ func (r *Receiver) Bind(ctx context.Context, streamID string, pt uint8) (uint16,
 		return 0, err
 	}
 	port := uint16(pc.LocalAddr().(*net.UDPAddr).Port)
+	if jitterTarget <= 0 {
+		jitterTarget = 60 * time.Millisecond
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	b := &streamBinding{
 		streamID:    streamID,
@@ -78,7 +83,7 @@ func (r *Receiver) Bind(ctx context.Context, streamID string, pt uint8) (uint16,
 		pt:          uint16(pt),
 		port:        port,
 		pc:          pc,
-		jb:          New(60 * time.Millisecond),
+		jb:          New(jitterTarget),
 		cancel:      cancel,
 	}
 	r.streams[streamID] = b
