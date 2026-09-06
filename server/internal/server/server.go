@@ -357,11 +357,13 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 	_ = st.DeviceCommandSent()
 	_ = s.repos.Streams.Save(streamID, deviceID, string(stream.StateStarting), "", 0, st.StartedAt)
 
-	// Determine the server IP the device connected to (from the control session)
-	// We don't have direct access to the session here, so use a best-effort:
-	// if ControlAddr is a specific IP, use that; otherwise use localhost fallback
+	// Determine the server IP the device connected to (from the control
+	// session's LocalAddr). Falls back to cfg.ControlAddr host, then
+	// 127.0.0.1 when both are unavailable/unspecified.
 	serverIP := "127.0.0.1"
-	if s.cfg.ControlAddr != "" {
+	if ip, ok := s.ctrl.LocalIP(deviceID); ok {
+		serverIP = ip
+	} else if s.cfg.ControlAddr != "" {
 		host, _, err := net.SplitHostPort(s.cfg.ControlAddr)
 		if err == nil && host != "" && host != "0.0.0.0" && host != "::" {
 			serverIP = host

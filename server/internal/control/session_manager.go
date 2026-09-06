@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"sync"
 )
 
@@ -121,6 +122,28 @@ func (m *SessionManager) SendSetConfig(ctx context.Context, deviceID string, req
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// LocalIP returns the server-side IP the device connected to,
+// extracted from its control connection LocalAddr. Returns "",false
+// when the session is missing or the addr is not a *net.TCPAddr
+// (e.g. net.Pipe used in tests).
+func (m *SessionManager) LocalIP(deviceID string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[deviceID]
+	if !ok {
+		return "", false
+	}
+	addr := s.LocalAddr()
+	if ta, ok := addr.(*net.TCPAddr); ok {
+		ip := ta.IP
+		if ip.IsUnspecified() {
+			return "", false
+		}
+		return ip.String(), true
+	}
+	return "", false
 }
 
 func (m *SessionManager) session(deviceID string) (*Session, bool) {

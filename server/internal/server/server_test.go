@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"espmic/server/internal/api"
 	"espmic/server/internal/audio"
 	"espmic/server/internal/config"
 	"espmic/server/internal/control"
@@ -693,5 +694,121 @@ func TestRestoreReconcilesStaleStreams(t *testing.T) {
 	// COMPLETE untouched in DB
 	if byID[cases[3].id].State != string(stream.StateComplete) {
 		t.Fatalf("COMPLETE: DB state = %s, want COMPLETE", byID[cases[3].id].State)
+	}
+}
+
+// mockTCPConn wraps a net.Conn and overrides LocalAddr to return a
+// *net.TCPAddr — used to prove StartStream derives Destination.IP from
+// the control session's LocalAddr (not the 127.0.0.1 fallback).
+type mockTCPConn struct {
+	net.Conn
+	localAddr *net.TCPAddr
+}
+
+func (c *mockTCPConn) LocalAddr() net.Addr {
+	return c.localAddr
+}
+
+// TestStartStreamDestinationIPFromSessionLocalAddr verifies the emitted
+// start_stream Destination.IP equals the control session's LocalAddr IP
+// (not 127.0.0.1), per the fix-rtp-dest-ip dispatch.
+func TestStartStreamDestinationIPFromSessionLocalAddr(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	cfg := config.Load()
+	cfg.DBPath = dbPath
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	ctx := context.Background()
+
+	// Register the device so StartStream passes the device.Get check
+	if err := srv.Authenticate(ctx, "test-device", ""); err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+
+	// Create a pipe; wrap the server side to report a concrete LocalAddr.
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	mockConn := &mockTCPConn{
+		Conn: serverConn,
+		localAddr: &net.TCPAddr{
+			IP:   net.ParseIP("192.168.1.50"),
+			Port: 12345,
+		},
+	}
+
+	// Create and run a control session for the device
+	session := control.NewSession(mockConn, nil, time.Now, nil)
+	session.SetOnReady(srv.ctrl.OnReady)
+	session.SetOnClose(func(s *control.Session) { srv.ctrl.Unregister(s.DeviceID()) })
+	session.SetOnMsg(srv.ctrl.Handler())
+	sessCtx, sessCancel := context.WithCancel(ctx)
+	defer sessCancel()
+	go session.Run(sessCtx)
+
+	// Complete the hello handshake so the session registers
+	hello := control.NewHello("test-device", "", "1.0.0", nil)
+	payload, err := control.Encode(hello)
+	if err != nil {
+		t.Fatalf("Encode hello: %v", err)
+	}
+	if err := control.WriteFrame(clientConn, payload); err != nil {
+		t.Fatalf("WriteFrame hello: %v", err)
+	}
+	_, err = control.ReadFrame(clientConn) // hello_ack
+	if err != nil {
+		t.Fatalf("ReadFrame hello_ack: %v", err)
+	}
+
+	// StartStream sends start_stream and awaits stream_started. Run it in a
+	// goroutine so we can read the emitted message and reply.
+	type result struct {
+		res map[string]any
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		res, err := srv.StartStream(ctx, "test-device", "test", api.RecordingConfig{})
+		ch <- result{res, err}
+	}()
+
+	// Read the emitted start_stream and assert Destination.IP
+	frame, err := control.ReadFrame(clientConn)
+	if err != nil {
+		t.Fatalf("ReadFrame start_stream: %v", err)
+	}
+	msg, err := control.DecodePayload(frame)
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	startReq, ok := msg.(*control.StartStream)
+	if !ok {
+		t.Fatalf("type = %T, want *control.StartStream", msg)
+	}
+	if startReq.Destination.IP != "192.168.1.50" {
+		t.Fatalf("Destination.IP = %q, want 192.168.1.50 (from session LocalAddr)", startReq.Destination.IP)
+	}
+
+	// Reply stream_started so StartStream completes
+	reply := control.NewStreamStarted(startReq.RequestID, startReq.StreamID)
+	replyPayload, err := control.Encode(reply)
+	if err != nil {
+		t.Fatalf("Encode reply: %v", err)
+	}
+	if err := control.WriteFrame(clientConn, replyPayload); err != nil {
+		t.Fatalf("WriteFrame reply: %v", err)
+	}
+
+	// Verify StartStream succeeded
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			t.Fatalf("StartStream: %v", r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("StartStream did not complete")
 	}
 }

@@ -67,6 +67,10 @@ func (s *Session) ID() string { return s.id }
 // DeviceID returns the authenticated device id (empty before).
 func (s *Session) DeviceID() string { return s.deviceID }
 
+// LocalAddr returns the local address of the control connection
+// (the server-side endpoint the device connected to).
+func (s *Session) LocalAddr() net.Addr { return s.conn.LocalAddr() }
+
 // LastPongSeq returns the most recent pong seq echoed by the device and
 // whether any pong has been received yet (spec §10 correlation).
 func (s *Session) LastPongSeq() (uint32, bool) {
