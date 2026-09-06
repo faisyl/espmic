@@ -56,6 +56,17 @@ typedef struct {
 
 static amgr_t g;
 
+static void log_heap_diag(const char *label, size_t req_bytes)
+{
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    size_t largest_spiram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    ESP_LOGE(TAG, "diag %s: asked=%zu internal_free=%zu spiram_free=%zu internal_largest=%zu spiram_largest=%zu",
+             label, req_bytes, (unsigned)free_internal, (unsigned)free_spiram,
+             (unsigned)largest_internal, (unsigned)largest_spiram);
+}
+
 /* Prefer PSRAM (spec Section 2) but fall back to internal RAM. */
 static void *aud_alloc(size_t n)
 {
@@ -75,6 +86,9 @@ esp_err_t audio_manager_init(const audio_manager_config_t *cfg)
     ESP_LOGI(TAG, "init: bclk=%d ws=%d din=%d br=%u",
              g.cfg.i2s_bclk_gpio, g.cfg.i2s_ws_gpio, g.cfg.i2s_din_gpio,
              (unsigned)g.cfg.default_bitrate);
+    ESP_LOGI(TAG, "PSRAM: initialized=%d total=%zu",
+             esp_psram_is_initialized(),
+             (size_t)heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
     return ESP_OK;
 }
 
@@ -125,7 +139,11 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
     g.queue_lock   = xSemaphoreCreateMutex();
     if (!g.ring_storage || !g.eq_arena || !g.eq_lengths ||
         !g.ring_lock || !g.queue_lock) {
-        ESP_LOGE(TAG, "alloc failed");
+        log_heap_diag(g.ring_storage ? (g.eq_arena ? "eq_lengths" : "eq_arena") : "ring_storage",
+                      (!g.ring_storage) ? (size_t)(PCM_RING_SAMPLES * sizeof(int32_t)) :
+                      (!g.eq_arena)         ? (size_t)(ENC_QUEUE_SLOTS * ENC_QUEUE_SLOT_SZ) :
+                      (size_t)(ENC_QUEUE_SLOTS * sizeof(size_t)));
+        ESP_LOGE(TAG, "alloc failed: PSRAM required for PCM ring + encoder arena (see diag above)");
         free_storage();
         return ESP_ERR_NO_MEM;
     }
