@@ -123,7 +123,7 @@ func (s *Session) Run(ctx context.Context) error {
 	s.deviceID = hello.DeviceID
 	s.registered = true
 
-	if err := s.writeMsg(NewHelloAck(s.id, s.deviceID)); err != nil {
+	if err := s.writeMsg(NewHelloAck(s.id, s.deviceID, s.now().UnixMilli())); err != nil {
 		return fmt.Errorf("control: write hello_ack: %w", err)
 	}
 

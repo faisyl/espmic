@@ -140,7 +140,7 @@ func TestMessagesRoundtrip(t *testing.T) {
 		msg  Message
 	}{
 		{"hello", NewHello("esp32-001", "secret", "1.2.3", &Capabilities{Codecs: []string{"opus"}})},
-		{"hello_ack", NewHelloAck("sess-1", "esp32-001")},
+		{"hello_ack", NewHelloAck("sess-1", "esp32-001", time.Now().UnixMilli())},
 		{"ping", NewPing(5)},
 		{"pong", NewPong(5)},
 		{"start_stream", NewStartStream("req-1", "uuid",

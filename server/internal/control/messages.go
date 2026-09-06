@@ -47,6 +47,7 @@ type Capabilities struct {
 // token, mTLS-derived) is pinned in S3; S2 uses a pre-shared credential.
 type Hello struct {
 	Type         string        `json:"type"`
+	Protocol     int           `json:"protocol,omitempty"`
 	DeviceID     string        `json:"device_id"`
 	Credential   string        `json:"credential,omitempty"`
 	Firmware     string        `json:"firmware,omitempty"`
@@ -54,20 +55,21 @@ type Hello struct {
 }
 
 func NewHello(deviceID, credential, firmware string, capabilities *Capabilities) *Hello {
-	return &Hello{Type: TypeHello, DeviceID: deviceID, Credential: credential, Firmware: firmware, Capabilities: capabilities}
+	return &Hello{Type: TypeHello, Protocol: 1, DeviceID: deviceID, Credential: credential, Firmware: firmware, Capabilities: capabilities}
 }
 
 func (m *Hello) Kind() string { return TypeHello }
 
 // HelloAck acknowledges authentication/session establishment (server -> device).
 type HelloAck struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	DeviceID  string `json:"device_id"`
+	Type         string `json:"type"`
+	SessionID    string `json:"session_id"`
+	DeviceID     string `json:"device_id"`
+	ServerTimeMs int64  `json:"server_time_ms"`
 }
 
-func NewHelloAck(sessionID, deviceID string) *HelloAck {
-	return &HelloAck{Type: TypeHelloAck, SessionID: sessionID, DeviceID: deviceID}
+func NewHelloAck(sessionID, deviceID string, serverTimeMs int64) *HelloAck {
+	return &HelloAck{Type: TypeHelloAck, SessionID: sessionID, DeviceID: deviceID, ServerTimeMs: serverTimeMs}
 }
 
 func (m *HelloAck) Kind() string { return TypeHelloAck }
