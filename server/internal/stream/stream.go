@@ -154,6 +154,25 @@ func (s *Stream) DeviceRejected(reason FailureReason) error {
 	return nil
 }
 
+// MarkServerRestartFailed transitions a live stream -> FAILED with
+// FailureServerRestart. Used by Restore() to reconcile stale streams left
+// over from a previous server process (spec §20). Accepts CREATED, STARTING,
+// RTP_WAIT, or ACTIVE — any non-terminal state a stream could be in when the
+// server went down. These restored records are audit entries; they do not need
+// a full transition history.
+func (s *Stream) MarkServerRestartFailed() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch s.state {
+	case StateCreated, StateStarting, StateRTPWait, StateActive:
+		s.state = StateFailed
+		s.Reason = FailureServerRestart
+		return nil
+	default:
+		return ErrIllegalTransition
+	}
+}
+
 // StreamStarted transitions STARTING -> RTP_WAIT and starts the 5s deadline
 // (spec §17: TIMEOUT edge RTP_WAIT->TIMEOUT@5s after stream_started).
 func (s *Stream) StreamStarted(now time.Time) error {

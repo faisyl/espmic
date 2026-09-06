@@ -127,23 +127,21 @@ func (s *Server) Restore() error {
 		switch stream.StreamState(rec.State) {
 		case stream.StateActive, stream.StateStarting, stream.StateRTPWait:
 			// Stale stream from before restart — mark FAILED.
+			// Build the stream in CREATED, then use the dedicated restart
+			// transition so the in-memory state agrees with what we persist.
 			st := stream.New(rec.StreamID, rec.DeviceID, rec.SSRC, rec.Started)
 			st.WithTimeoutConfig(stream.TimeoutConfig{
 				RTPWait:      time.Duration(s.cfg.RTPWaitTimeoutS) * time.Second,
 				RTPDisappear: 1 * time.Second,
 			})
-			_ = st.Start(rec.Started)
-			_ = st.DeviceCommandSent()
-			if stream.StreamState(rec.State) == stream.StateRTPWait {
-				_ = st.StreamStarted(rec.Started)
-			} else if stream.StreamState(rec.State) == stream.StateActive {
-				_ = st.StreamStarted(rec.Started)
-				_ = st.FirstPacket(rec.Started)
+			if err := st.MarkServerRestartFailed(); err != nil {
+				return fmt.Errorf("mark stream %s failed: %w", rec.StreamID, err)
 			}
-			_ = st.DeviceRejected(stream.FailureServerRestart)
 			s.stream.Add(st)
 			// Persist the reconciled state.
-			_ = s.repos.Streams.Save(rec.StreamID, rec.DeviceID, string(stream.StateFailed), string(stream.FailureServerRestart), rec.SSRC, rec.Started)
+			if err := s.repos.Streams.Save(rec.StreamID, rec.DeviceID, string(stream.StateFailed), string(stream.FailureServerRestart), rec.SSRC, rec.Started); err != nil {
+				return fmt.Errorf("save stream %s: %w", rec.StreamID, err)
+			}
 			slog.Info("restore: marked stale stream failed", "stream_id", rec.StreamID, "device_id", rec.DeviceID, "was", rec.State)
 		default:
 			// COMPLETE/FAILED/CREATED/STOPPING — no runtime registration needed.

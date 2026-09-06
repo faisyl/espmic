@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"espmic/server/internal/config"
 	"espmic/server/internal/control"
 	"espmic/server/internal/device"
+	"espmic/server/internal/persistence"
 	"espmic/server/internal/rtp"
 	"espmic/server/internal/stream"
 )
@@ -575,5 +577,107 @@ func TestStopStreamConsumesAndPersistsStats(t *testing.T) {
 	}
 	if loadedStats.PacketsSent != 150 || loadedStats.BytesSent != 30000 {
 		t.Fatalf("unexpected loadedStats: %+v", loadedStats)
+	}
+}
+
+// TestRestoreReconcilesStaleStreams verifies the full restart
+// reconciliation path (spec §20):
+//  1. Seed a DB with a device + streams in STARTING, RTP_WAIT, ACTIVE, COMPLETE.
+//  2. Build a new Server over the same DB, call Restore().
+//  3. All three live streams are FAILED with FailureServerRestart in BOTH
+//     the registry (GetStream) and the DB (StreamRepo.LoadAll).
+//  4. COMPLETE stream is untouched and not re-registered.
+//  5. Registry state == DB state for every reconciled stream.
+func TestRestoreReconcilesStaleStreams(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := persistence.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	repos := persistence.NewRepos(db)
+	now := time.Now()
+
+	// Seed device (TOFU)
+	dev := device.Device{DeviceID: "esp32-test", DisplayName: "esp32-test", Status: "online"}
+	if err := repos.Devices.Save(dev, []byte{}); err != nil {
+		t.Fatal("seed device:", err)
+	}
+
+	// Seed four streams: STARTING, RTP_WAIT, ACTIVE, COMPLETE
+	cases := []struct {
+		id    string
+		state string
+	}{
+		{"strm-starting", string(stream.StateStarting)},
+		{"strm-rtpwait", string(stream.StateRTPWait)},
+		{"strm-active", string(stream.StateActive)},
+		{"strm-complete", string(stream.StateComplete)},
+	}
+	for _, c := range cases {
+		if err := repos.Streams.Save(c.id, dev.DeviceID, c.state, "", 1, now); err != nil {
+			t.Fatalf("seed stream %s: %v", c.id, err)
+		}
+	}
+
+	// Build a new Server over the same DB and Restore
+	cfg := config.Load()
+	cfg.DBPath = dbPath
+	cfg.ControlAddr = "localhost:0"
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	if err := srv.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	// Device is present in registry (recognized)
+	if _, err := srv.device.Get(dev.DeviceID); err != nil {
+		t.Fatalf("device not in registry: %v", err)
+	}
+
+	// Live streams: registry = FAILED with FailureServerRestart
+	for _, c := range cases[:3] {
+		st, err := srv.stream.Get(c.id)
+		if err != nil {
+			t.Fatalf("%s: registry Get: %v", c.id, err)
+		}
+		if st.State() != stream.StateFailed {
+			t.Fatalf("%s: registry state = %s, want FAILED", c.id, st.State())
+		}
+		if st.Reason != stream.FailureServerRestart {
+			t.Fatalf("%s: registry reason = %s, want FailureServerRestart", c.id, st.Reason)
+		}
+	}
+
+	// COMPLETE stream: not registered in memory (reconciliation skipped it)
+	if _, err := srv.stream.Get(cases[3].id); err != stream.ErrStreamNotFound {
+		t.Fatalf("COMPLETE stream should not be registered, got %v", err)
+	}
+
+	// DB state must match registry for every stream
+	loaded, err := repos.Streams.LoadAll()
+	if err != nil {
+		t.Fatal("LoadAll:", err)
+	}
+	byID := make(map[string]persistence.StreamRecord)
+	for _, r := range loaded {
+		byID[r.StreamID] = r
+	}
+	for _, c := range cases[:3] {
+		rec := byID[c.id]
+		if rec.State != string(stream.StateFailed) {
+			t.Fatalf("%s: DB state = %s, want FAILED", c.id, rec.State)
+		}
+		if rec.Reason != string(stream.FailureServerRestart) {
+			t.Fatalf("%s: DB reason = %s, want FailureServerRestart", c.id, rec.Reason)
+		}
+	}
+	// COMPLETE untouched in DB
+	if byID[cases[3].id].State != string(stream.StateComplete) {
+		t.Fatalf("COMPLETE: DB state = %s, want COMPLETE", byID[cases[3].id].State)
 	}
 }

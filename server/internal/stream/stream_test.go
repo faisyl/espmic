@@ -156,3 +156,68 @@ func TestForEach(t *testing.T) {
 		t.Fatalf("ForEach visited %d, want 2", len(ids))
 	}
 }
+
+func TestMarkServerRestartFailed(t *testing.T) {
+	// Accepts any non-terminal state.
+	accepts := []struct {
+		name  string
+		setup func(s *Stream)
+	}{
+		{"CREATED", func(s *Stream) {}},
+		{"STARTING", func(s *Stream) {
+			s.Start(t0)
+			s.DeviceCommandSent()
+		}},
+		{"RTP_WAIT", func(s *Stream) {
+			s.Start(t0)
+			s.DeviceCommandSent()
+			s.StreamStarted(t0)
+		}},
+		{"ACTIVE", func(s *Stream) {
+			s.Start(t0)
+			s.DeviceCommandSent()
+			s.StreamStarted(t0)
+			s.FirstPacket(t0)
+		}},
+	}
+	for _, tc := range accepts {
+		s := New("s1", "d1", 1, t0)
+		tc.setup(s)
+		if err := s.MarkServerRestartFailed(); err != nil {
+			t.Fatalf("%s: unexpected error: %v", tc.name, err)
+		}
+		if s.State() != StateFailed {
+			t.Fatalf("%s: state = %s, want FAILED", tc.name, s.State())
+		}
+		if s.Reason != FailureServerRestart {
+			t.Fatalf("%s: reason = %s, want FailureServerRestart", tc.name, s.Reason)
+		}
+	}
+
+	// Rejects terminal states.
+	rejects := []struct {
+		name  string
+		setup func(s *Stream)
+	}{
+		{"COMPLETE", func(s *Stream) {
+			s.Start(t0)
+			s.DeviceCommandSent()
+			s.StreamStarted(t0)
+			s.FirstPacket(t0)
+			s.StopRequested()
+			s.Stopped()
+		}},
+		{"FAILED", func(s *Stream) {
+			s.Start(t0)
+			s.DeviceCommandSent()
+			s.DeviceRejected(FailureStartRejected)
+		}},
+	}
+	for _, tc := range rejects {
+		s := New("s1", "d1", 1, t0)
+		tc.setup(s)
+		if err := s.MarkServerRestartFailed(); err != ErrIllegalTransition {
+			t.Fatalf("%s: err = %v, want ErrIllegalTransition", tc.name, err)
+		}
+	}
+}
