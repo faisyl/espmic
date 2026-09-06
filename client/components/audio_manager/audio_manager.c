@@ -56,13 +56,34 @@ typedef struct {
 
 static amgr_t g;
 
+/* Buffer geometry: runtime PSRAM-aware sizing.
+ * PSRAM boards (WROVER/ESP32-S3): production sizes.
+ * No-PSRAM boards (WROOM): internal-RAM fit (~46KB total). */
+static bool has_psram;
+static size_t pcm_ring_ms, enc_queue_slots, enc_queue_slot_sz;
+
+static void pick_geometry(void)
+{
+    has_psram = heap_caps_get_total_size(MALLOC_CAP_SPIRAM) > 0;
+    if (has_psram) {
+        pcm_ring_ms = 200;
+        enc_queue_slots = 64;
+        enc_queue_slot_sz = 1500;
+    } else {
+        pcm_ring_ms = 80;
+        enc_queue_slots = 32;
+        enc_queue_slot_sz = 512;
+    }
+}
+
+#define PCM_RING_SAMPLES   ((I2S_CAP_SAMPLE_RATE * pcm_ring_ms / 1000) * I2S_CAP_CHANNELS)
+#define PCM_RING_BYTES     (PCM_RING_SAMPLES * sizeof(int32_t))
+#define EQ_ARENA_BYTES     (enc_queue_slots * enc_queue_slot_sz)
+#define EQ_LENS_BYTES      (enc_queue_slots * sizeof(size_t))
+#define TOTAL_EST          (PCM_RING_BYTES + EQ_ARENA_BYTES + EQ_LENS_BYTES)
+
 /* Prefer PSRAM (spec Section 2) but fall back to internal RAM. */
 static void *aud_alloc(size_t n)
-{
-    void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!p) p = heap_caps_malloc(n, MALLOC_CAP_8BIT);
-    return p;
-}
 
 esp_err_t audio_manager_init(const audio_manager_config_t *cfg)
 {
@@ -75,6 +96,15 @@ esp_err_t audio_manager_init(const audio_manager_config_t *cfg)
     ESP_LOGI(TAG, "init: bclk=%d ws=%d din=%d br=%u",
              g.cfg.i2s_bclk_gpio, g.cfg.i2s_ws_gpio, g.cfg.i2s_din_gpio,
              (unsigned)g.cfg.default_bitrate);
+    pick_geometry();
+    ESP_LOGI(TAG, "PSRAM: initialized=%d total=%zu",
+             esp_psram_is_initialized(),
+             (size_t)heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+    ESP_LOGI(TAG, "buffer geometry: profile=%s ring_ms=%zu slots=%zu slot_sz=%zu ring=%zu arena=%zu lens=%zu total=%zu",
+             has_psram ? "psram" : "internal",
+             (unsigned)pcm_ring_ms, (unsigned)enc_queue_slots, (unsigned)enc_queue_slot_sz,
+             (unsigned)PCM_RING_BYTES, (unsigned)EQ_ARENA_BYTES, (unsigned)EQ_LENS_BYTES,
+             (unsigned)TOTAL_EST);
     return ESP_OK;
 }
 
@@ -125,7 +155,16 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
     g.queue_lock   = xSemaphoreCreateMutex();
     if (!g.ring_storage || !g.eq_arena || !g.eq_lengths ||
         !g.ring_lock || !g.queue_lock) {
-        ESP_LOGE(TAG, "alloc failed");
+        log_heap_diag(g.ring_storage ? (g.eq_arena ? "eq_lengths" : "eq_arena") : "ring_storage",
+                      (!g.ring_storage) ? (size_t)PCM_RING_BYTES :
+                      (!g.eq_arena)         ? (size_t)EQ_ARENA_BYTES :
+                      (size_t)EQ_LENS_BYTES,
+                      heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                      heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                      heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+        ESP_LOGE(TAG, "alloc failed: %s required for PCM ring + encoder arena",
+                 has_psram ? "PSRAM" : "internal RAM (reduce PCM_RING_MS/ENC_QUEUE_SLOTS)");
         free_storage();
         return ESP_ERR_NO_MEM;
     }
