@@ -245,6 +245,30 @@ func (s *Stream) DeviceDisconnected() error {
 	return nil
 }
 
+// RTPWaitTimeout transitions RTP_WAIT -> FAILED on RTP wait timeout (spec §17).
+func (s *Stream) RTPWaitTimeout(now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateRTPWait {
+		return ErrIllegalTransition
+	}
+	s.state = StateFailed
+	s.Reason = FailureRTPWaitTimeout
+	return nil
+}
+
+// RTPTimeout transitions ACTIVE -> FAILED on RTP disappearance timeout (spec §17).
+func (s *Stream) RTPTimeout(now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateActive {
+		return ErrIllegalTransition
+	}
+	s.state = StateFailed
+	s.Reason = FailureRTPTimeout
+	return nil
+}
+
 // DecodeError transitions ACTIVE -> DECODE_ERROR (spec §17).
 func (s *Stream) DecodeError() error {
 	s.mu.Lock()

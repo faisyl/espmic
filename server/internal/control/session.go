@@ -38,6 +38,7 @@ type Session struct {
 	registered bool
 
 	onReady func(*Session)
+	onClose func(*Session)
 }
 
 // NewSession returns a session bound to conn. auth validates the hello. now
@@ -72,9 +73,19 @@ func (s *Session) SetOnMsg(h func(Message)) { s.onMsg = h }
 // register the session with a SessionManager.
 func (s *Session) SetOnReady(h func(*Session)) { s.onReady = h }
 
+// SetOnClose sets a callback invoked when the session ends (after hello_ack,
+// when DeviceID is known). It must be called before Run; used to notify the
+// server of device disconnect for stream cleanup.
+func (s *Session) SetOnClose(h func(*Session)) { s.onClose = h }
+
 // Run drives the session until ctx is cancelled or the connection closes.
 func (s *Session) Run(ctx context.Context) error {
 	defer s.conn.Close()
+	defer func() {
+		if s.onClose != nil {
+			s.onClose(s)
+		}
+	}()
 
 	slog.Debug("control: connection opened", "remote", s.conn.RemoteAddr())
 	defer slog.Debug("control: connection closed", "remote", s.conn.RemoteAddr())

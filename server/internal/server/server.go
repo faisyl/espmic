@@ -105,6 +105,10 @@ func (s *Server) Start() error {
 		mode = "TLS"
 	}
 
+	// Start the stream lifecycle monitor (GAP-13/14).
+	// Polls every 500ms for streams that have timed out or disappeared.
+	go s.streamMonitor()
+
 	go func() {
 		log.Printf("control listening on %s (%s)", s.cfg.ControlAddr, mode)
 		s.controlLoop(s.controlLn)
@@ -129,6 +133,7 @@ func (s *Server) controlLoop(ln net.Listener) {
 		sess := control.NewSession(conn, s, time.Now, nil)
 		sess.SetOnMsg(s.ctrl.Handler())
 		sess.SetOnReady(s.ctrl.OnReady)
+		sess.SetOnClose(s.OnDeviceDisconnect)
 		go func() {
 			defer s.ctrl.Unregister(sess.DeviceID())
 			if err := sess.Run(s.ctx); err != nil {
@@ -426,6 +431,55 @@ func newRequestID() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	return fmt.Sprintf("req-%x", b[:])
+}
+
+// streamMonitor polls for stream lifecycle timeouts (GAP-13/14).
+// Runs every 500ms and checks:
+//   - RTP_WAIT streams that have exceeded their wait timeout -> FAILED (RTP_WAIT->TIMEOUT)
+//   - ACTIVE streams that have disappeared (no RTP packets) -> FAILED (ACTIVE->RTP_TIMEOUT)
+func (s *Server) streamMonitor() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.stream.ForEach(func(st *stream.Stream) {
+				if st.RTPWaitTimedOut(now) {
+					slog.Debug("stream: RTP wait timeout", "stream_id", st.StreamID, "device_id", st.DeviceID)
+					_ = st.RTPWaitTimeout(now)
+					s.cleanupStream(st)
+				} else if st.RTPDisappeared(now) {
+					slog.Debug("stream: RTP disappeared", "stream_id", st.StreamID, "device_id", st.DeviceID)
+					_ = st.RTPTimeout(now)
+					s.cleanupStream(st)
+				}
+			})
+		}
+	}
+}
+
+// OnDeviceDisconnect is called when a control session ends (after hello_ack).
+// Fails all ACTIVE streams for the disconnected device (spec §17: ACTIVE->DEVICE_DISCONNECTED).
+func (s *Server) OnDeviceDisconnect(sess *control.Session) {
+	deviceID := sess.DeviceID()
+	if deviceID == "" {
+		return
+	}
+	s.stream.ForEach(func(st *stream.Stream) {
+		if st.DeviceID == deviceID && st.State() == stream.StateActive {
+			slog.Debug("stream: device disconnected, failing stream", "stream_id", st.StreamID, "device_id", deviceID)
+			_ = st.DeviceDisconnected()
+			s.cleanupStream(st)
+		}
+	})
+}
+
+// cleanupStream closes RTP resources and removes the stream from the registry.
+func (s *Server) cleanupStream(st *stream.Stream) {
+	s.rtp.CloseStream(st.StreamID)
+	s.stream.Remove(st.StreamID)
 }
 
 func (s *Server) Close() error {
