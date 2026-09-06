@@ -51,6 +51,12 @@ type Server struct {
 	recordingsMu sync.Mutex
 	recRepo      *persistence.RecordingRepo
 
+	// metrics tracking for GAP-16
+	metricsMu    sync.Mutex
+	lastStats    map[string]rtp.Stats // streamID -> last Stats snapshot
+	lastBitrate  map[string]int64     // streamID -> bytes received in last window
+	lastBitrateT map[string]time.Time // streamID -> last bitrate calc time
+
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -68,18 +74,21 @@ func New(cfg *config.Config) (*Server, error) {
 
 	m := metrics.New()
 	s := &Server{
-		cfg:        cfg,
-		db:         db,
-		device:     device.NewRegistry(),
-		stream:     stream.NewRegistry(),
-		metrics:    m,
-		rtp:        rtp.NewReceiver(m),
-		bus:        audio.NewPCMBus(),
-		ctrl:       control.NewSessionManager(),
-		recordings: make(map[string]*audio.Recorder),
-		recRepo:    persistence.NewRecordingRepo(db),
-		ctx:        ctx,
-		cancel:     cancel,
+		cfg:          cfg,
+		db:           db,
+		device:       device.NewRegistry(),
+		stream:       stream.NewRegistry(),
+		metrics:      m,
+		rtp:          rtp.NewReceiver(m),
+		bus:          audio.NewPCMBus(),
+		ctrl:         control.NewSessionManager(),
+		recordings:   make(map[string]*audio.Recorder),
+		recRepo:      persistence.NewRecordingRepo(db),
+		lastStats:    make(map[string]rtp.Stats),
+		lastBitrate:  make(map[string]int64),
+		lastBitrateT: make(map[string]time.Time),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 	return s, nil
 }
@@ -490,10 +499,12 @@ func newRequestID() string {
 	return fmt.Sprintf("req-%x", b[:])
 }
 
-// streamMonitor polls for stream lifecycle timeouts (GAP-13/14).
+// streamMonitor polls for stream lifecycle timeouts (GAP-13/14) and
+// pushes per-stream RTP metrics to the global metrics surface (GAP-16).
 // Runs every 500ms and checks:
 //   - RTP_WAIT streams that have exceeded their wait timeout -> FAILED (RTP_WAIT->TIMEOUT)
 //   - ACTIVE streams that have disappeared (no RTP packets) -> FAILED (ACTIVE->RTP_TIMEOUT)
+//   - For ACTIVE streams: collect Stats from jitter buffer, compute deltas, push to Metrics
 func (s *Server) streamMonitor() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -502,6 +513,22 @@ func (s *Server) streamMonitor() {
 		case <-s.ctx.Done():
 			return
 		case now := <-ticker.C:
+			// Collect active stream IDs under registry lock (avoid nested locks)
+			var activeIDs []string
+			s.stream.ForEach(func(st *stream.Stream) {
+				if st.State() == stream.StateActive {
+					activeIDs = append(activeIDs, st.StreamID)
+				}
+			})
+
+			// Push metrics for active streams (no registry lock held)
+			for _, id := range activeIDs {
+				if stats, ok := s.rtp.StreamStats(id); ok {
+					s.pushStreamMetrics(id, stats, now)
+				}
+			}
+
+			// Stream lifecycle timeout checks
 			var toCleanup []string
 			s.stream.ForEach(func(st *stream.Stream) {
 				if st.RTPWaitTimedOut(now) {
@@ -519,6 +546,61 @@ func (s *Server) streamMonitor() {
 			}
 		}
 	}
+}
+
+// pushStreamMetrics computes deltas from jitter buffer Stats and pushes
+// them to the global Metrics. Called from streamMonitor (no locks held).
+func (s *Server) pushStreamMetrics(streamID string, stats rtp.Stats, now time.Time) {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+
+	last := s.lastStats[streamID]
+
+	// Lost
+	if delta := stats.Lost - last.Lost; delta > 0 {
+		s.metrics.AddRTPPacketsLost(int(delta))
+	}
+	// Duplicate
+	if delta := stats.Duplicate - last.Duplicate; delta > 0 {
+		for i := uint64(0); i < delta; i++ {
+			s.metrics.IncRTPPacketsDuplicate()
+		}
+	}
+	// Reordered
+	if delta := stats.Reordered - last.Reordered; delta > 0 {
+		for i := uint64(0); i < delta; i++ {
+			s.metrics.IncRTPPacketsReordered()
+		}
+	}
+	// Late
+	if delta := stats.Late - last.Late; delta > 0 {
+		for i := uint64(0); i < delta; i++ {
+			s.metrics.IncRTPPacketsLate()
+		}
+	}
+	// Jitter (gauge)
+	s.metrics.SetRTPJitterMS(stats.JitterMS)
+
+	// Bitrate: sliding window over ~5s
+	lastTime := s.lastBitrateT[streamID]
+	// Estimate bytes from received packets * typical Opus frame size (~300 bytes avg)
+	// Since we don't track exact bytes, approximate: 1 packet ≈ 300 bytes
+	receivedDelta := stats.Received - last.Received
+	if receivedDelta > 0 {
+		estBytes := int64(receivedDelta) * 300
+		s.lastBitrate[streamID] = estBytes
+		s.lastBitrateT[streamID] = now
+	}
+	if !lastTime.IsZero() {
+		window := now.Sub(lastTime).Seconds()
+		if window > 0 {
+			bitrate := int64(float64(s.lastBitrate[streamID]) * 8 / window)
+			s.metrics.SetRTPBitrateBPS(bitrate)
+		}
+	}
+
+	// Update last stats
+	s.lastStats[streamID] = stats
 }
 
 // OnDeviceDisconnect is called when a control session ends (after hello_ack).
@@ -542,11 +624,18 @@ func (s *Server) OnDeviceDisconnect(deviceID string) {
 
 // cleanupStreamByID closes RTP resources and removes the stream from the registry by ID.
 // Idempotent — safe if stream already gone (e.g., double teardown from monitor + disconnect race).
-// Also finalizes any associated recorder.
+// Also finalizes any associated recorder and cleans up metrics tracking.
 func (s *Server) cleanupStreamByID(streamID string) {
 	s.rtp.CloseStream(streamID)
 	s.stream.Remove(streamID)
 	s.finalizeRecorder(streamID)
+
+	// Clean up metrics tracking for this stream (prevents leak/stale deltas)
+	s.metricsMu.Lock()
+	delete(s.lastStats, streamID)
+	delete(s.lastBitrate, streamID)
+	delete(s.lastBitrateT, streamID)
+	s.metricsMu.Unlock()
 }
 
 // GetRecording returns recording metadata by recording ID.
