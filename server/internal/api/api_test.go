@@ -21,17 +21,18 @@ import (
 // PushConfig behavior is programmable so handler tests can cover success,
 // rejection, offline, and timeout.
 type fakeSrv struct {
-	pushMsg   control.Message
-	pushErr   error
-	pushCfg   control.SetConfig
-	pushDev   string
-	pushCall  bool
-	streams   interface{}
-	startMsg  map[string]any
-	startErr  error
-	startCall bool
-	stopErr   error
-	stopCall  bool
+	pushMsg       control.Message
+	pushErr       error
+	pushCfg       control.SetConfig
+	pushDev       string
+	pushCall      bool
+	streams       interface{}
+	startMsg      map[string]any
+	startErr      error
+	startCall     bool
+	stopErr       error
+	stopCall      bool
+	devFinalStats *control.StreamStoppedStats
 }
 
 func (f *fakeSrv) DeviceList() interface{}     { return []string{"d1"} }
@@ -77,6 +78,12 @@ func (f *fakeSrv) DownloadRecording(recordingID string) (string, error) {
 }
 func (f *fakeSrv) GetDeviceStatus(_ context.Context, deviceID string) (control.Message, error) {
 	return &control.Status{Type: control.TypeStatus, RequestID: "req-test", Status: "ok", State: "IDLE"}, nil
+}
+func (f *fakeSrv) DeviceFinalStats(streamID string) (*control.StreamStoppedStats, bool) {
+	if f.devFinalStats != nil {
+		return f.devFinalStats, true
+	}
+	return nil, false
 }
 
 // TestHealth verifies the S0 health endpoint (spec §15).
@@ -534,4 +541,60 @@ func TestStopStreamEndpoint(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStreamStatsEndpoint exercises GET /api/streams/{id}/stats.
+func TestStreamStatsEndpoint(t *testing.T) {
+	t.Run("rtp only - no device_final", func(t *testing.T) {
+		srv := &fakeSrv{}
+		mux := http.NewServeMux()
+		RegisterRoutes(mux, config.Load(), srv)
+
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/streams/strm-1/stats", nil))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		for _, key := range []string{"stream_id", "packets_received", "packets_lost", "jitter_ms", "rtp"} {
+			if _, ok := body[key]; !ok {
+				t.Fatalf("body missing key %q; got %v", key, body)
+			}
+		}
+		if _, ok := body["device_final"]; ok {
+			t.Fatal("device_final should be absent when no device stats")
+		}
+	})
+
+	t.Run("with device_final stats", func(t *testing.T) {
+		srv := &fakeSrv{
+			devFinalStats: &control.StreamStoppedStats{
+				PacketsSent: 42,
+				BytesSent:   8400,
+				DurationMS:  5000,
+			},
+		}
+		mux := http.NewServeMux()
+		RegisterRoutes(mux, config.Load(), srv)
+
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/streams/strm-1/stats", nil))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		if !bytes.Contains(rec.Body.Bytes(), []byte(`"device_final"`)) {
+			t.Fatalf("body missing device_final; got %s", rec.Body.String())
+		}
+		if !bytes.Contains(rec.Body.Bytes(), []byte(`"rtp"`)) {
+			t.Fatalf("body missing rtp namespace; got %s", rec.Body.String())
+		}
+		if !bytes.Contains(rec.Body.Bytes(), []byte(`"packets_received"`)) {
+			t.Fatalf("body missing backward-compat packets_received; got %s", rec.Body.String())
+		}
+	})
 }

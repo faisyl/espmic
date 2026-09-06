@@ -46,6 +46,8 @@ type Server interface {
 	DownloadRecording(recordingID string) (string, error)
 	// Device status (GAP-02/03)
 	GetDeviceStatus(ctx context.Context, deviceID string) (control.Message, error)
+	// Device final stats (GAP-04/19)
+	DeviceFinalStats(streamID string) (*control.StreamStoppedStats, bool)
 }
 
 // Handlers holds the server reference and implements each §15 endpoint.
@@ -330,7 +332,17 @@ func (h *Handlers) handleStreamStats(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+
+	rtpStats := map[string]any{
+		"packets_received":  stats.Received,
+		"packets_lost":      stats.Lost,
+		"packets_duplicate": stats.Duplicate,
+		"packets_reordered": stats.Reordered,
+		"packets_late":      stats.Late,
+		"jitter_ms":         stats.JitterMS,
+	}
+
+	resp := map[string]any{
 		"stream_id":         id,
 		"packets_received":  stats.Received,
 		"packets_lost":      stats.Lost,
@@ -338,7 +350,14 @@ func (h *Handlers) handleStreamStats(w http.ResponseWriter, r *http.Request) {
 		"packets_reordered": stats.Reordered,
 		"packets_late":      stats.Late,
 		"jitter_ms":         stats.JitterMS,
-	})
+		"rtp":               rtpStats,
+	}
+
+	if devStats, found := h.srv.DeviceFinalStats(id); found && devStats != nil {
+		resp["device_final"] = devStats
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handlers) handleRecording(w http.ResponseWriter, r *http.Request) {

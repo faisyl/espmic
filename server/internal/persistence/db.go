@@ -56,6 +56,16 @@ func migrate(db *sql.DB) error {
 		uri TEXT,
 		FOREIGN KEY(stream_id) REFERENCES streams(stream_id)
 	);
+	CREATE TABLE IF NOT EXISTS device_stats (
+		stream_id TEXT PRIMARY KEY,
+		device_id TEXT NOT NULL,
+		packets_sent INTEGER NOT NULL DEFAULT 0,
+		bytes_sent INTEGER NOT NULL DEFAULT 0,
+		duration_ms INTEGER NOT NULL DEFAULT 0,
+		encoder_errors INTEGER NOT NULL DEFAULT 0,
+		extra BLOB,
+		FOREIGN KEY(stream_id) REFERENCES streams(stream_id)
+	);
 	`
 	_, err := db.Exec(stmt)
 	return err
@@ -63,16 +73,23 @@ func migrate(db *sql.DB) error {
 
 // Repos provides handles to the per-entity repositories (spec §20).
 type Repos struct {
-	Devices    *DeviceRepo
-	Streams    *StreamRepo
-	Recordings *RecordingRepo
+	Devices     *DeviceRepo
+	Streams     *StreamRepo
+	Recordings  *RecordingRepo
+	DeviceStats *DeviceStatsRepo
 }
 
 // NewRepos builds repositories over an open db.
 func NewRepos(db *sql.DB) *Repos {
 	return &Repos{
-		Devices:    &DeviceRepo{db: db},
-		Streams:    &StreamRepo{db: db},
-		Recordings: &RecordingRepo{db: db},
+		Devices:     &DeviceRepo{db: db},
+		Streams:     &StreamRepo{db: db},
+		Recordings:  &RecordingRepo{db: db},
+		DeviceStats: &DeviceStatsRepo{db: db},
 	}
+}
+
+// NewDeviceStatsRepo builds a DeviceStatsRepo over an open db.
+func NewDeviceStatsRepo(db *sql.DB) *DeviceStatsRepo {
+	return &DeviceStatsRepo{db: db}
 }

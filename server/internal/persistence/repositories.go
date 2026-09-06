@@ -110,3 +110,33 @@ func (r *RecordingRepo) Finalize(recID string, end time.Time, bytes int64, uri s
 		end.UnixMilli(), bytes, uri, recID)
 	return err
 }
+
+// DeviceStatsRepo persists device-final stream stats from stream_stopped (GAP-04/19).
+type DeviceStatsRepo struct {
+	db *sql.DB
+}
+
+// Save stores the device-final stats for a stream.
+func (r *DeviceStatsRepo) Save(streamID, deviceID string, packetsSent, bytesSent, durationMS, encoderErrors uint64, extraJSON []byte) error {
+	_, err := r.db.Exec(
+		`INSERT INTO device_stats(stream_id,device_id,packets_sent,bytes_sent,duration_ms,encoder_errors,extra)
+		 VALUES(?,?,?,?,?,?,?)
+		 ON CONFLICT(stream_id) DO UPDATE SET
+		   device_id=excluded.device_id,
+		   packets_sent=excluded.packets_sent,
+		   bytes_sent=excluded.bytes_sent,
+		   duration_ms=excluded.duration_ms,
+		   encoder_errors=excluded.encoder_errors,
+		   extra=excluded.extra`,
+		streamID, deviceID, packetsSent, bytesSent, durationMS, encoderErrors, extraJSON)
+	return err
+}
+
+// Load returns the device-final stats for a stream_id.
+func (r *DeviceStatsRepo) Load(streamID string) (deviceID string, packetsSent, bytesSent, durationMS, encoderErrors uint64, extraJSON []byte, err error) {
+	row := r.db.QueryRow(
+		`SELECT device_id,packets_sent,bytes_sent,duration_ms,encoder_errors,extra
+		   FROM device_stats WHERE stream_id=?`, streamID)
+	err = row.Scan(&deviceID, &packetsSent, &bytesSent, &durationMS, &encoderErrors, &extraJSON)
+	return
+}

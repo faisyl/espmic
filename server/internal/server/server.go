@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -57,6 +58,11 @@ type Server struct {
 	lastBitrate  map[string]int64     // streamID -> bytes received in last window
 	lastBitrateT map[string]time.Time // streamID -> last bitrate calc time
 
+	// device-final stats from stream_stopped (GAP-04/19)
+	deviceStatsMu   sync.Mutex
+	deviceStats     map[string]control.StreamStoppedStats
+	deviceStatsRepo *persistence.DeviceStatsRepo
+
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -74,21 +80,23 @@ func New(cfg *config.Config) (*Server, error) {
 
 	m := metrics.New()
 	s := &Server{
-		cfg:          cfg,
-		db:           db,
-		device:       device.NewRegistry(),
-		stream:       stream.NewRegistry(),
-		metrics:      m,
-		rtp:          rtp.NewReceiver(m),
-		bus:          audio.NewPCMBus(),
-		ctrl:         control.NewSessionManager(),
-		recordings:   make(map[string]*audio.Recorder),
-		recRepo:      persistence.NewRecordingRepo(db),
-		lastStats:    make(map[string]rtp.Stats),
-		lastBitrate:  make(map[string]int64),
-		lastBitrateT: make(map[string]time.Time),
-		ctx:          ctx,
-		cancel:       cancel,
+		cfg:             cfg,
+		db:              db,
+		device:          device.NewRegistry(),
+		stream:          stream.NewRegistry(),
+		metrics:         m,
+		rtp:             rtp.NewReceiver(m),
+		bus:             audio.NewPCMBus(),
+		ctrl:            control.NewSessionManager(),
+		recordings:      make(map[string]*audio.Recorder),
+		recRepo:         persistence.NewRecordingRepo(db),
+		deviceStatsRepo: persistence.NewDeviceStatsRepo(db),
+		lastStats:       make(map[string]rtp.Stats),
+		lastBitrate:     make(map[string]int64),
+		lastBitrateT:    make(map[string]time.Time),
+		deviceStats:     make(map[string]control.StreamStoppedStats),
+		ctx:             ctx,
+		cancel:          cancel,
 	}
 	return s, nil
 }
@@ -425,6 +433,18 @@ func (s *Server) StopStream(ctx context.Context, streamID string) error {
 	// Check reply
 	switch r := msg.(type) {
 	case *control.StreamStopped:
+		if r.Stats != nil {
+			s.deviceStatsMu.Lock()
+			s.deviceStats[streamID] = *r.Stats
+			s.deviceStatsMu.Unlock()
+			var extraBytes []byte
+			if len(r.Stats.Extra) > 0 {
+				if b, err := json.Marshal(r.Stats.Extra); err == nil {
+					extraBytes = b
+				}
+			}
+			_ = s.deviceStatsRepo.Save(streamID, st.DeviceID, r.Stats.PacketsSent, r.Stats.BytesSent, r.Stats.DurationMS, r.Stats.EncoderErrors, extraBytes)
+		}
 		_ = st.Stopped()
 		return nil
 	case *control.Error:
@@ -479,6 +499,40 @@ func (s *Server) DeviceGet(deviceID string) (*device.Device, error) {
 // RTPStreamStats returns the RTP statistics for a stream.
 func (s *Server) RTPStreamStats(streamID string) (rtp.Stats, bool) {
 	return s.rtp.StreamStats(streamID)
+}
+
+// DeviceFinalStats returns the device-final stats from stream_stopped for a stream.
+func (s *Server) DeviceFinalStats(streamID string) (*control.StreamStoppedStats, bool) {
+	s.deviceStatsMu.Lock()
+	stats, ok := s.deviceStats[streamID]
+	s.deviceStatsMu.Unlock()
+	if ok {
+		return &stats, true
+	}
+
+	// Try loading from persistence
+	if s.deviceStatsRepo != nil {
+		_, packetsSent, bytesSent, durationMS, encoderErrors, extraJSON, err := s.deviceStatsRepo.Load(streamID)
+		if err == nil {
+			loaded := control.StreamStoppedStats{
+				PacketsSent:   packetsSent,
+				BytesSent:     bytesSent,
+				DurationMS:    durationMS,
+				EncoderErrors: encoderErrors,
+			}
+			if len(extraJSON) > 0 {
+				var extra map[string]any
+				if err := json.Unmarshal(extraJSON, &extra); err == nil {
+					loaded.Extra = extra
+				}
+			}
+			s.deviceStatsMu.Lock()
+			s.deviceStats[streamID] = loaded
+			s.deviceStatsMu.Unlock()
+			return &loaded, true
+		}
+	}
+	return nil, false
 }
 
 // StreamPort returns the UDP port for a stream.

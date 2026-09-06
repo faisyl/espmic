@@ -93,3 +93,33 @@ func TestRecordingRepoCreateFinalize(t *testing.T) {
 		t.Fatalf("Finalize: %v", err)
 	}
 }
+
+func TestDeviceStatsRepoRoundtrip(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	r := NewRepos(db)
+	now := time.Unix(1_000_000, 0)
+	if err := r.Streams.Save("s1", "d1", "ACTIVE", "", 1, now); err != nil {
+		t.Fatalf("Save stream: %v", err)
+	}
+
+	extra := []byte(`{"custom_field":123}`)
+	if err := r.DeviceStats.Save("s1", "d1", 500, 10000, 20000, 1, extra); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	devID, pkts, bytes, dur, encErr, gotExtra, err := r.DeviceStats.Load("s1")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if devID != "d1" || pkts != 500 || bytes != 10000 || dur != 20000 || encErr != 1 {
+		t.Fatalf("unexpected fields: %s %d %d %d %d", devID, pkts, bytes, dur, encErr)
+	}
+	if string(gotExtra) != string(extra) {
+		t.Fatalf("extra = %s, want %s", string(gotExtra), string(extra))
+	}
+}

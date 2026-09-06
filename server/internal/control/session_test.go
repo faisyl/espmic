@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -278,8 +277,8 @@ func TestCommandServiceDeliverUnsolicited(t *testing.T) {
 }
 
 func TestStreamStoppedStatsField(t *testing.T) {
-	st := NewStreamStopped("req-1", "s1", map[string]any{"packets": 100})
-	if st.Stats["packets"] != 100 {
+	st := NewStreamStopped("req-1", "s1", &StreamStoppedStats{PacketsSent: 100})
+	if st.Stats == nil || st.Stats.PacketsSent != 100 {
 		t.Fatalf("stats = %+v", st.Stats)
 	}
 	b, _ := Encode(st)
@@ -291,7 +290,7 @@ func TestStreamStoppedStatsField(t *testing.T) {
 	if !ok {
 		t.Fatalf("type = %T", msg)
 	}
-	if !reflect.DeepEqual(ss.Stats["packets"], float64(100)) {
+	if ss.Stats == nil || ss.Stats.PacketsSent != 100 {
 		t.Fatalf("roundtrip stats = %+v", ss.Stats)
 	}
 }

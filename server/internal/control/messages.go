@@ -165,15 +165,26 @@ func NewStopStream(requestID, streamID string) *StopStream {
 
 func (m *StopStream) Kind() string { return TypeStopStream }
 
-// StreamStopped confirms a stream stopped, optionally with stats (device -> server).
-type StreamStopped struct {
-	Type      string         `json:"type"`
-	RequestID string         `json:"request_id"`
-	StreamID  string         `json:"stream_id"`
-	Stats     map[string]any `json:"stats,omitempty"`
+// StreamStoppedStats is the typed schema for the device's final stream stats
+// delivered in a stream_stopped frame (spec §10). Unknown keys are captured in
+// Extra for forward-compat.
+type StreamStoppedStats struct {
+	PacketsSent   uint64         `json:"packets_sent,omitempty"`
+	BytesSent     uint64         `json:"bytes_sent,omitempty"`
+	DurationMS    uint64         `json:"duration_ms,omitempty"`
+	EncoderErrors uint64         `json:"encoder_errors,omitempty"`
+	Extra         map[string]any `json:"extra,omitempty"`
 }
 
-func NewStreamStopped(requestID, streamID string, stats map[string]any) *StreamStopped {
+// StreamStopped confirms a stream stopped, optionally with stats (device -> server).
+type StreamStopped struct {
+	Type      string              `json:"type"`
+	RequestID string              `json:"request_id"`
+	StreamID  string              `json:"stream_id"`
+	Stats     *StreamStoppedStats `json:"stats,omitempty"`
+}
+
+func NewStreamStopped(requestID, streamID string, stats *StreamStoppedStats) *StreamStopped {
 	return &StreamStopped{Type: TypeStreamStopped, RequestID: requestID, StreamID: streamID, Stats: stats}
 }
 

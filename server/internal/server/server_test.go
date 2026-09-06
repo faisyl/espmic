@@ -18,6 +18,7 @@ import (
 
 	"espmic/server/internal/audio"
 	"espmic/server/internal/config"
+	"espmic/server/internal/control"
 	"espmic/server/internal/device"
 	"espmic/server/internal/rtp"
 	"espmic/server/internal/stream"
@@ -470,4 +471,109 @@ func TestCleanupStreamByIDIdempotent(t *testing.T) {
 
 	// Third cleanup also safe
 	srv.cleanupStreamByID(streamID)
+}
+
+func TestStopStreamConsumesAndPersistsStats(t *testing.T) {
+	cfg := config.Load()
+	cfg.DBPath = ":memory:"
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	// Connect fake device session via net.Pipe
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	sess := control.NewSession(serverConn, srv, time.Now, nil)
+	sess.SetOnMsg(srv.ctrl.Handler())
+	sess.SetOnReady(srv.ctrl.OnReady)
+	go func() {
+		_ = sess.Run(context.Background())
+	}()
+
+	// Device sends hello
+	hello := control.NewHello("test-device", "", "v1.0.0", nil)
+	if err := control.WriteMessage(clientConn, hello); err != nil {
+		t.Fatal(err)
+	}
+	// Read hello_ack
+	frame, err := control.ReadFrame(clientConn)
+	if err != nil {
+		t.Fatalf("read hello_ack: %v", err)
+	}
+	ackMsg, err := control.DecodePayload(frame)
+	if err != nil || ackMsg.Kind() != control.TypeHelloAck {
+		t.Fatalf("expected hello_ack, got %v (%v)", ackMsg, err)
+	}
+
+	// Register stream
+	streamID := "test-stream-stopstats"
+	st := stream.New(streamID, "test-device", 1234, time.Now())
+	_ = st.Start(time.Now())
+	_ = st.DeviceCommandSent()
+	_ = st.StreamStarted(time.Now())
+	_ = st.FirstPacket(time.Now())
+	srv.stream.Add(st)
+
+	// Bind RTP dummy port
+	_, _ = srv.rtp.Bind(context.Background(), streamID, 111)
+
+	// Device routine to handle stop_stream and reply with StreamStopped carrying stats
+	stopHandled := make(chan struct{})
+	go func() {
+		defer close(stopHandled)
+		payload, err := control.ReadFrame(clientConn)
+		if err != nil {
+			return
+		}
+		msg, err := control.DecodePayload(payload)
+		if err != nil {
+			return
+		}
+		stopMsg, ok := msg.(*control.StopStream)
+		if !ok {
+			return
+		}
+		stats := &control.StreamStoppedStats{
+			PacketsSent:   150,
+			BytesSent:     30000,
+			DurationMS:    10000,
+			EncoderErrors: 0,
+		}
+		reply := control.NewStreamStopped(stopMsg.RequestID, stopMsg.StreamID, stats)
+		_ = control.WriteMessage(clientConn, reply)
+	}()
+
+	// Call StopStream
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := srv.StopStream(ctx, streamID); err != nil {
+		t.Fatalf("StopStream failed: %v", err)
+	}
+	<-stopHandled
+
+	// Verify DeviceFinalStats returns the stats
+	devStats, found := srv.DeviceFinalStats(streamID)
+	if !found || devStats == nil {
+		t.Fatal("expected device final stats to be found")
+	}
+	if devStats.PacketsSent != 150 || devStats.BytesSent != 30000 || devStats.DurationMS != 10000 {
+		t.Fatalf("unexpected devStats: %+v", devStats)
+	}
+
+	// Verify persistence: clear in-memory and reload
+	srv.deviceStatsMu.Lock()
+	delete(srv.deviceStats, streamID)
+	srv.deviceStatsMu.Unlock()
+
+	loadedStats, found2 := srv.DeviceFinalStats(streamID)
+	if !found2 || loadedStats == nil {
+		t.Fatal("expected device final stats to load from persistence")
+	}
+	if loadedStats.PacketsSent != 150 || loadedStats.BytesSent != 30000 {
+		t.Fatalf("unexpected loadedStats: %+v", loadedStats)
+	}
 }

@@ -278,3 +278,24 @@ func TestDecodeHelloWithCapabilitiesObject(t *testing.T) {
 		t.Fatalf("roundtrip lost data")
 	}
 }
+
+func TestDecodeStreamStoppedStats(t *testing.T) {
+	jsonPayload := `{"type":"stream_stopped","request_id":"req-99","stream_id":"strm-123","stats":{"packets_sent":100,"bytes_sent":2000,"duration_ms":5000,"encoder_errors":2}}`
+	msg, err := DecodePayload([]byte(jsonPayload))
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	ss, ok := msg.(*StreamStopped)
+	if !ok {
+		t.Fatalf("type = %T, want *StreamStopped", msg)
+	}
+	if ss.StreamID != "strm-123" || ss.RequestID != "req-99" {
+		t.Fatalf("unexpected stream_id or request_id: %+v", ss)
+	}
+	if ss.Stats == nil {
+		t.Fatal("stats should not be nil")
+	}
+	if ss.Stats.PacketsSent != 100 || ss.Stats.BytesSent != 2000 || ss.Stats.DurationMS != 5000 || ss.Stats.EncoderErrors != 2 {
+		t.Fatalf("unexpected stats: %+v", ss.Stats)
+	}
+}
