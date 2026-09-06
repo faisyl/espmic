@@ -305,3 +305,169 @@ func (l *audioTestListener) OnPCM(f *audio.DecodedAudioFrame) {
 		l.onPCM(f)
 	}
 }
+
+// TestStreamMonitorRTPWaitTimeout verifies the streamMonitor transitions
+// RTP_WAIT -> FAILED (RTP_WAIT->TIMEOUT) when no RTP packets arrive within
+// the configured RTPWait timeout.
+func TestStreamMonitorRTPWaitTimeout(t *testing.T) {
+	cfg := config.Load()
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start the server (starts streamMonitor)
+	go func() { _ = srv.Start() }()
+	defer srv.cancel()
+
+	// Create stream with short RTPWait timeout (100ms)
+	streamID := "test-stream-rtpwait"
+	st := stream.New(streamID, "test-device", 0, time.Now())
+	st.WithTimeoutConfig(stream.TimeoutConfig{
+		RTPWait:      100 * time.Millisecond,
+		RTPDisappear: 1 * time.Second,
+	})
+	srv.stream.Add(st)
+
+	// Start the stream to RTP_WAIT state
+	_ = st.Start(time.Now())
+	_ = st.DeviceCommandSent()
+	_ = st.StreamStarted(time.Now())
+	if st.State() != stream.StateRTPWait {
+		t.Fatalf("expected RTP_WAIT, got %s", st.State())
+	}
+
+	// Wait for monitor to trigger timeout (poll every 500ms, so wait ~1s)
+	time.Sleep(1500 * time.Millisecond)
+
+	// Stream should be transitioned to FAILED and cleaned up
+	if st.State() != stream.StateFailed {
+		t.Fatalf("expected FAILED after RTP wait timeout, got %s", st.State())
+	}
+	if st.Reason != stream.FailureRTPWaitTimeout {
+		t.Fatalf("expected FailureRTPWaitTimeout, got %s", st.Reason)
+	}
+	// Stream should be removed from registry
+	if _, err := srv.stream.Get(streamID); err != stream.ErrStreamNotFound {
+		t.Fatalf("expected stream removed from registry")
+	}
+}
+
+// TestStreamMonitorRTPDisappeared verifies the streamMonitor transitions
+// ACTIVE -> FAILED (ACTIVE->RTP_TIMEOUT) when RTP packets stop arriving
+// for the configured RTPDisappear timeout.
+func TestStreamMonitorRTPDisappeared(t *testing.T) {
+	cfg := config.Load()
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start the server (starts streamMonitor)
+	go func() { _ = srv.Start() }()
+	defer srv.cancel()
+
+	// Create stream with short RTPDisappear timeout (50ms)
+	streamID := "test-stream-rtptimeout"
+	st := stream.New(streamID, "test-device", 0, time.Now())
+	st.WithTimeoutConfig(stream.TimeoutConfig{
+		RTPWait:      5 * time.Second,
+		RTPDisappear: 50 * time.Millisecond,
+	})
+	srv.stream.Add(st)
+
+	// Start the stream to ACTIVE state
+	_ = st.Start(time.Now())
+	_ = st.DeviceCommandSent()
+	_ = st.StreamStarted(time.Now())
+	_ = st.FirstPacket(time.Now()) // transition to ACTIVE
+	if st.State() != stream.StateActive {
+		t.Fatalf("expected ACTIVE, got %s", st.State())
+	}
+
+	// Wait for monitor to trigger disappearance timeout (poll every 500ms, wait ~1s)
+	time.Sleep(1500 * time.Millisecond)
+
+	// Stream should be transitioned to FAILED and cleaned up
+	if st.State() != stream.StateFailed {
+		t.Fatalf("expected FAILED after RTP disappear timeout, got %s", st.State())
+	}
+	if st.Reason != stream.FailureRTPTimeout {
+		t.Fatalf("expected FailureRTPTimeout, got %s", st.Reason)
+	}
+	// Stream should be removed from registry
+	if _, err := srv.stream.Get(streamID); err != stream.ErrStreamNotFound {
+		t.Fatalf("expected stream removed from registry")
+	}
+}
+
+// TestOnDeviceDisconnectFailsActiveStreams verifies that when a device
+// disconnects, its active streams are failed with DEVICE_DISCONNECTED.
+func TestOnDeviceDisconnectFailsActiveStreams(t *testing.T) {
+	cfg := config.Load()
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create active stream for device
+	streamID := "test-stream-disconnect"
+	st := stream.New(streamID, "test-device", 0, time.Now())
+	srv.stream.Add(st)
+
+	_ = st.Start(time.Now())
+	_ = st.DeviceCommandSent()
+	_ = st.StreamStarted(time.Now())
+	_ = st.FirstPacket(time.Now())
+	if st.State() != stream.StateActive {
+		t.Fatalf("expected ACTIVE, got %s", st.State())
+	}
+
+	// Simulate device disconnect via OnDeviceDisconnect
+	srv.OnDeviceDisconnect("test-device")
+
+	// Stream should be FAILED with DEVICE_DISCONNECTED
+	if st.State() != stream.StateFailed {
+		t.Fatalf("expected FAILED after device disconnect, got %s", st.State())
+	}
+	if st.Reason != stream.FailureDeviceDisc {
+		t.Fatalf("expected FailureDeviceDisc, got %s", st.Reason)
+	}
+	// Stream should be removed from registry
+	if _, err := srv.stream.Get(streamID); err != stream.ErrStreamNotFound {
+		t.Fatalf("expected stream removed from registry")
+	}
+}
+
+// TestCleanupStreamByIDIdempotent verifies cleanupStreamByID is idempotent
+// and safe to call twice (e.g., monitor + disconnect race).
+func TestCleanupStreamByIDIdempotent(t *testing.T) {
+	cfg := config.Load()
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create and register a stream
+	streamID := "test-stream-idempotent"
+	st := stream.New(streamID, "test-device", 0, time.Now())
+	srv.stream.Add(st)
+
+	// First cleanup
+	srv.cleanupStreamByID(streamID)
+
+	// Stream should be removed
+	if _, err := srv.stream.Get(streamID); err != stream.ErrStreamNotFound {
+		t.Fatalf("expected stream removed after first cleanup")
+	}
+
+	// Second cleanup should not panic
+	srv.cleanupStreamByID(streamID)
+
+	// Third cleanup also safe
+	srv.cleanupStreamByID(streamID)
+}

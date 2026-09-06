@@ -133,7 +133,9 @@ func (s *Server) controlLoop(ln net.Listener) {
 		sess := control.NewSession(conn, s, time.Now, nil)
 		sess.SetOnMsg(s.ctrl.Handler())
 		sess.SetOnReady(s.ctrl.OnReady)
-		sess.SetOnClose(s.OnDeviceDisconnect)
+		sess.SetOnClose(func(sess *control.Session) {
+			s.OnDeviceDisconnect(sess.DeviceID())
+		})
 		go func() {
 			defer s.ctrl.Unregister(sess.DeviceID())
 			if err := sess.Run(s.ctx); err != nil {
@@ -445,41 +447,49 @@ func (s *Server) streamMonitor() {
 		case <-s.ctx.Done():
 			return
 		case now := <-ticker.C:
+			var toCleanup []string
 			s.stream.ForEach(func(st *stream.Stream) {
 				if st.RTPWaitTimedOut(now) {
 					slog.Debug("stream: RTP wait timeout", "stream_id", st.StreamID, "device_id", st.DeviceID)
 					_ = st.RTPWaitTimeout(now)
-					s.cleanupStream(st)
+					toCleanup = append(toCleanup, st.StreamID)
 				} else if st.RTPDisappeared(now) {
 					slog.Debug("stream: RTP disappeared", "stream_id", st.StreamID, "device_id", st.DeviceID)
 					_ = st.RTPTimeout(now)
-					s.cleanupStream(st)
+					toCleanup = append(toCleanup, st.StreamID)
 				}
 			})
+			for _, id := range toCleanup {
+				s.cleanupStreamByID(id)
+			}
 		}
 	}
 }
 
 // OnDeviceDisconnect is called when a control session ends (after hello_ack).
 // Fails all ACTIVE streams for the disconnected device (spec §17: ACTIVE->DEVICE_DISCONNECTED).
-func (s *Server) OnDeviceDisconnect(sess *control.Session) {
-	deviceID := sess.DeviceID()
+func (s *Server) OnDeviceDisconnect(deviceID string) {
 	if deviceID == "" {
 		return
 	}
+	var toCleanup []string
 	s.stream.ForEach(func(st *stream.Stream) {
 		if st.DeviceID == deviceID && st.State() == stream.StateActive {
 			slog.Debug("stream: device disconnected, failing stream", "stream_id", st.StreamID, "device_id", deviceID)
 			_ = st.DeviceDisconnected()
-			s.cleanupStream(st)
+			toCleanup = append(toCleanup, st.StreamID)
 		}
 	})
+	for _, id := range toCleanup {
+		s.cleanupStreamByID(id)
+	}
 }
 
-// cleanupStream closes RTP resources and removes the stream from the registry.
-func (s *Server) cleanupStream(st *stream.Stream) {
-	s.rtp.CloseStream(st.StreamID)
-	s.stream.Remove(st.StreamID)
+// cleanupStreamByID closes RTP resources and removes the stream from the registry by ID.
+// Idempotent — safe if stream already gone (e.g., double teardown from monitor + disconnect race).
+func (s *Server) cleanupStreamByID(streamID string) {
+	s.rtp.CloseStream(streamID)
+	s.stream.Remove(streamID)
 }
 
 func (s *Server) Close() error {
