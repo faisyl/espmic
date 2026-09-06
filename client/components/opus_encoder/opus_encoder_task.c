@@ -21,6 +21,12 @@ static const char *TAG = "opus_task";
  * single UDP datagram after the 12-byte RTP header. */
 #define OPUS_MAX_PACKET 1500
 
+/* opus_encode() for 48 kHz stereo at complexity 6 uses well over 8 KB of call
+ * stack; an 8 KB task stack overflowed on hardware (confirmed by a device
+ * "stack overflow in task opus" backtrace). 20 KB leaves comfortable margin
+ * above the ~12-16 KB worst case. */
+#define OPUS_TASK_STACK 20480
+
 struct opus_task_ctx {
     opus_task_config_t cfg;
     OpusEncoder       *enc;
@@ -59,8 +65,17 @@ static void opus_task(void *arg)
     esp_task_wdt_add(NULL);
 
     ESP_LOGI(TAG, "opus task started");
+    uint32_t dbg_n = 0;
     while (ctx->running) {
         esp_task_wdt_reset();
+
+        /* Periodically report the minimum free stack (words) so stack headroom
+         * is visible on-device; a small/shrinking value means the OPUS_TASK_STACK
+         * size is too tight. ~250 frames ~= 5 s at 20 ms/frame. */
+        if ((dbg_n++ % 250u) == 0u) {
+            ESP_LOGI(TAG, "opus stack high-water (min free words): %u",
+                     (unsigned)uxTaskGetStackHighWaterMark(NULL));
+        }
 
         if (!take_frame(ctx, frame)) {
             /* Not enough audio yet; wait ~ half a frame and retry. Bounded wait,
@@ -140,10 +155,10 @@ esp_err_t opus_task_start(const opus_task_config_t *cfg, opus_task_handle_t *out
                                           : (configMAX_PRIORITIES - 4);
     BaseType_t ok;
     if (ctx->cfg.task_core >= 0) {
-        ok = xTaskCreatePinnedToCore(opus_task, "opus", 8192, ctx, prio,
+        ok = xTaskCreatePinnedToCore(opus_task, "opus", OPUS_TASK_STACK, ctx, prio,
                                      &ctx->task, ctx->cfg.task_core);
     } else {
-        ok = xTaskCreate(opus_task, "opus", 8192, ctx, prio, &ctx->task);
+        ok = xTaskCreate(opus_task, "opus", OPUS_TASK_STACK, ctx, prio, &ctx->task);
     }
     if (ok != pdPASS) {
         ctx->running = false;
