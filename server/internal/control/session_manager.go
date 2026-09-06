@@ -70,6 +70,14 @@ func (m *SessionManager) Unregister(deviceID string) {
 	delete(m.sessions, deviceID)
 }
 
+// IsConnected reports whether a live session exists for deviceID.
+func (m *SessionManager) IsConnected(deviceID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.sessions[deviceID]
+	return ok
+}
+
 // SendSetConfig sends a set_config command to the device's live session and
 // awaits the correlated status (success) or error (rejection), or returns
 // ctx.Err() on timeout / cancellation. It mirrors CommandService.Await's

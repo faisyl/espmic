@@ -511,6 +511,22 @@ func TestStopStreamConsumesAndPersistsStats(t *testing.T) {
 		t.Fatalf("expected hello_ack, got %v (%v)", ackMsg, err)
 	}
 
+	// Wait for the session to be registered as connected (avoids
+	// the flaky race where OnReady fires after StopStream runs).
+	deadline := time.After(1 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if srv.ctrl.IsConnected("test-device") {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for test-device to connect")
+		case <-ticker.C:
+		}
+	}
+
 	// Register stream
 	streamID := "test-stream-stopstats"
 	st := stream.New(streamID, "test-device", 1234, time.Now())
