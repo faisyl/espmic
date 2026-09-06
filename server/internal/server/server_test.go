@@ -75,8 +75,7 @@ func TestStartControlListenerTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() { _ = srv.Start() }()
-	time.Sleep(100 * time.Millisecond)
-	addr := srv.controlLn.Addr().String()
+	addr := srv.ControlAddr()
 	conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		t.Fatalf("tls.Dial: %v", err)
@@ -95,8 +94,7 @@ func TestStartControlListenerPlainTCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() { _ = srv.Start() }()
-	time.Sleep(100 * time.Millisecond)
-	addr := srv.controlLn.Addr().String()
+	addr := srv.ControlAddr()
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatalf("net.Dial: %v", err)

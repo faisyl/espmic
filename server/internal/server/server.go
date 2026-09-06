@@ -46,12 +46,14 @@ type Server struct {
 	bus     *audio.PCMBus
 	ctrl    *control.SessionManager
 
-	httpServer   *http.Server
-	controlLn    net.Listener
-	streamsMu    sync.RWMutex
-	recordings   map[string]*audio.Recorder // streamID -> Recorder
-	recordingsMu sync.Mutex
-	recRepo      *persistence.RecordingRepo
+	httpServer     *http.Server
+	controlLn      net.Listener
+	controlAddr    string
+	controlLnReady chan struct{}
+	streamsMu      sync.RWMutex
+	recordings     map[string]*audio.Recorder // streamID -> Recorder
+	recordingsMu   sync.Mutex
+	recRepo        *persistence.RecordingRepo
 
 	// metrics tracking for GAP-16
 	metricsMu    sync.Mutex
@@ -91,6 +93,7 @@ func New(cfg *config.Config) (*Server, error) {
 		bus:             audio.NewPCMBus(),
 		ctrl:            control.NewSessionManager(),
 		recordings:      make(map[string]*audio.Recorder),
+		controlLnReady:  make(chan struct{}),
 		lastStats:       make(map[string]rtp.Stats),
 		lastBitrate:     make(map[string]int64),
 		lastBitrateT:    make(map[string]time.Time),
@@ -158,6 +161,14 @@ func (s *Server) Restore() error {
 // is wrapped in TLS; otherwise it remains plain TCP (spec §19). This lets the
 // same binary accept a real TLS handshake from an ESP32 device when certs are
 // configured, and continue to serve plain TCP (LAN-mode) when they are not.
+// ControlAddr returns the listener's bound address once the control
+// listener is ready. It blocks until Start() has bound the listener,
+// eliminating the test-only race of reading controlLn directly.
+func (s *Server) ControlAddr() string {
+	<-s.controlLnReady
+	return s.controlAddr
+}
+
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.cfg.ControlAddr)
 	if err != nil {
@@ -177,6 +188,8 @@ func (s *Server) Start() error {
 		})
 		mode = "TLS"
 	}
+	s.controlAddr = s.controlLn.Addr().String()
+	close(s.controlLnReady)
 
 	// Restore persisted state from a previous run (spec §20): load devices,
 	// reconcile stale streams (mark FAILED with FailureServerRestart).
