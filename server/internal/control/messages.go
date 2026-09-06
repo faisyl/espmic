@@ -108,6 +108,7 @@ type Codec struct {
 	VBR        bool   `json:"vbr"`         // true
 	FEC        bool   `json:"fec"`         // false
 	DTX        bool   `json:"dtx"`         // false
+	Complexity int    `json:"complexity"`  // Opus 0-10
 }
 
 // RTPConfig holds the RTP payload type (spec §11).
@@ -273,6 +274,12 @@ type SetConfig struct {
 	I2SBclk        *int    `json:"i2s_bclk,omitempty"`
 	I2SWs          *int    `json:"i2s_ws,omitempty"`
 	I2SDin         *int    `json:"i2s_din,omitempty"`
+	Fec            *bool   `json:"fec,omitempty"`
+	Dtx            *bool   `json:"dtx,omitempty"`
+	Complexity     *int    `json:"complexity,omitempty"`
+	Bitrate        *int    `json:"bitrate,omitempty"`
+	Vbr            *bool   `json:"vbr,omitempty"`
+	FrameMS        *int    `json:"frame_ms,omitempty"`
 }
 
 // NewSetConfig returns an empty set_config command with the given request id.
@@ -287,7 +294,9 @@ func (m *SetConfig) Kind() string { return TypeSetConfig }
 // the firmware accepts for ESP32 & ESP32-S3). Mirrors firmware-side validation.
 func (s *SetConfig) Validate() error {
 	if s.DefaultBitrate == nil && s.ServerHost == nil &&
-		s.I2SBclk == nil && s.I2SWs == nil && s.I2SDin == nil {
+		s.I2SBclk == nil && s.I2SWs == nil && s.I2SDin == nil &&
+		s.Fec == nil && s.Dtx == nil && s.Complexity == nil &&
+		s.Bitrate == nil && s.Vbr == nil && s.FrameMS == nil {
 		return errors.New("control: set_config requires at least one field")
 	}
 	if s.DefaultBitrate != nil && *s.DefaultBitrate < 0 {
@@ -299,6 +308,19 @@ func (s *SetConfig) Validate() error {
 	for name, v := range map[string]*int{"i2s_bclk": s.I2SBclk, "i2s_ws": s.I2SWs, "i2s_din": s.I2SDin} {
 		if v != nil && (*v < 0 || *v > 47) {
 			return fmt.Errorf("control: %s out of range 0..47: %d", name, *v)
+		}
+	}
+	if s.Complexity != nil && (*s.Complexity < 0 || *s.Complexity > 10) {
+		return fmt.Errorf("control: complexity out of range 0..10: %d", *s.Complexity)
+	}
+	if s.Bitrate != nil && *s.Bitrate < 0 {
+		return fmt.Errorf("control: bitrate must be >= 0: %d", *s.Bitrate)
+	}
+	if s.FrameMS != nil {
+		switch *s.FrameMS {
+		case 10, 20, 40, 60:
+		default:
+			return fmt.Errorf("control: frame_ms must be one of 10,20,40,60: %d", *s.FrameMS)
 		}
 	}
 	return nil

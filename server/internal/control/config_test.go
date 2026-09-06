@@ -66,6 +66,54 @@ func TestSetConfigOmitNilFields(t *testing.T) {
 
 // --- SetConfig.Validate ---
 
+func TestSetConfigRoundtripOpusParams(t *testing.T) {
+	fec := true
+	dtx := false
+	complexity := 5
+	bitrate := 128000
+	vbr := true
+	frameMS := 20
+
+	req := NewSetConfig("req-opus")
+	req.Fec = &fec
+	req.Dtx = &dtx
+	req.Complexity = &complexity
+	req.Bitrate = &bitrate
+	req.Vbr = &vbr
+	req.FrameMS = &frameMS
+
+	payload, err := Encode(req)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	msg, err := DecodePayload(payload)
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	got, ok := msg.(*SetConfig)
+	if !ok {
+		t.Fatalf("type = %T, want *SetConfig", msg)
+	}
+	if got.Fec == nil || *got.Fec != fec {
+		t.Fatalf("fec not preserved: %+v", got.Fec)
+	}
+	if got.Dtx == nil || *got.Dtx != dtx {
+		t.Fatalf("dtx not preserved: %+v", got.Dtx)
+	}
+	if got.Complexity == nil || *got.Complexity != complexity {
+		t.Fatalf("complexity not preserved: %+v", got.Complexity)
+	}
+	if got.Bitrate == nil || *got.Bitrate != bitrate {
+		t.Fatalf("bitrate not preserved: %+v", got.Bitrate)
+	}
+	if got.Vbr == nil || *got.Vbr != vbr {
+		t.Fatalf("vbr not preserved: %+v", got.Vbr)
+	}
+	if got.FrameMS == nil || *got.FrameMS != frameMS {
+		t.Fatalf("frame_ms not preserved: %+v", got.FrameMS)
+	}
+}
+
 func TestSetConfigValidate(t *testing.T) {
 	cases := []struct {
 		name string
@@ -82,6 +130,15 @@ func TestSetConfigValidate(t *testing.T) {
 		{"valid at boundary 0", &SetConfig{Type: TypeSetConfig, RequestID: "r1", I2SBclk: intPtr(0)}, ""},
 		{"valid at boundary 47", &SetConfig{Type: TypeSetConfig, RequestID: "r1", I2SBclk: intPtr(47)}, ""},
 		{"valid host", &SetConfig{Type: TypeSetConfig, RequestID: "r1", ServerHost: strPtr("a")}, ""},
+		{"complexity negative", &SetConfig{Type: TypeSetConfig, RequestID: "r1", Complexity: intPtr(-1)}, "complexity out of range"},
+		{"complexity too high", &SetConfig{Type: TypeSetConfig, RequestID: "r1", Complexity: intPtr(11)}, "complexity out of range"},
+		{"complexity at boundary 0", &SetConfig{Type: TypeSetConfig, RequestID: "r1", Complexity: intPtr(0)}, ""},
+		{"complexity at boundary 10", &SetConfig{Type: TypeSetConfig, RequestID: "r1", Complexity: intPtr(10)}, ""},
+		{"opus bitrate negative", &SetConfig{Type: TypeSetConfig, RequestID: "r1", Bitrate: intPtr(-1)}, "bitrate must be >= 0"},
+		{"frame_ms invalid", &SetConfig{Type: TypeSetConfig, RequestID: "r1", FrameMS: intPtr(30)}, "frame_ms must be one of"},
+		{"frame_ms valid 10", &SetConfig{Type: TypeSetConfig, RequestID: "r1", FrameMS: intPtr(10)}, ""},
+		{"frame_ms valid 60", &SetConfig{Type: TypeSetConfig, RequestID: "r1", FrameMS: intPtr(60)}, ""},
+		{"valid opus params", &SetConfig{Type: TypeSetConfig, RequestID: "r1", Fec: boolPtr(true), Dtx: boolPtr(false), Complexity: intPtr(5), Bitrate: intPtr(128000), Vbr: boolPtr(true), FrameMS: intPtr(20)}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -345,6 +402,7 @@ func TestSessionManagerSendSetConfigTimeout(t *testing.T) {
 
 func intPtr(v int) *int       { return &v }
 func strPtr(v string) *string { return &v }
+func boolPtr(v bool) *bool    { return &v }
 
 // --- SessionManager stream start/stop ---
 

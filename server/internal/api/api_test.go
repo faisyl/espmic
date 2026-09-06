@@ -324,6 +324,74 @@ func TestConfigEndpointPartialFields(t *testing.T) {
 	}
 }
 
+// TestConfigEndpointOpusParams verifies Opus encoder params pass through
+// handleConfig to PushConfig (spec §10 set_config via operator API).
+func TestConfigEndpointOpusParams(t *testing.T) {
+	srv := &fakeSrv{pushMsg: &control.Status{Type: control.TypeStatus, State: "IDLE"}}
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, config.Load(), srv)
+
+	body := `{"fec":true,"dtx":false,"complexity":5,"bitrate":128000,"vbr":true,"frame_ms":20}`
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/devices/d1/config", bytes.NewBufferString(body)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !srv.pushCall {
+		t.Fatal("expected PushConfig to be called")
+	}
+	if srv.pushCfg.Fec == nil || *srv.pushCfg.Fec != true {
+		t.Fatalf("fec not forwarded: %+v", srv.pushCfg.Fec)
+	}
+	if srv.pushCfg.Dtx == nil || *srv.pushCfg.Dtx != false {
+		t.Fatalf("dtx not forwarded: %+v", srv.pushCfg.Dtx)
+	}
+	if srv.pushCfg.Complexity == nil || *srv.pushCfg.Complexity != 5 {
+		t.Fatalf("complexity not forwarded: %+v", srv.pushCfg.Complexity)
+	}
+	if srv.pushCfg.Bitrate == nil || *srv.pushCfg.Bitrate != 128000 {
+		t.Fatalf("bitrate not forwarded: %+v", srv.pushCfg.Bitrate)
+	}
+	if srv.pushCfg.Vbr == nil || *srv.pushCfg.Vbr != true {
+		t.Fatalf("vbr not forwarded: %+v", srv.pushCfg.Vbr)
+	}
+	if srv.pushCfg.FrameMS == nil || *srv.pushCfg.FrameMS != 20 {
+		t.Fatalf("frame_ms not forwarded: %+v", srv.pushCfg.FrameMS)
+	}
+}
+
+// TestConfigEndpointOpusParamsRejected verifies out-of-range Opus params
+// are rejected with 400 before reaching PushConfig.
+func TestConfigEndpointOpusParamsRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"complexity too high", `{"complexity":11}`},
+		{"complexity negative", `{"complexity":-1}`},
+		{"frame_ms invalid", `{"frame_ms":30}`},
+		{"bitrate negative", `{"bitrate":-1}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &fakeSrv{}
+			mux := http.NewServeMux()
+			RegisterRoutes(mux, config.Load(), srv)
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/devices/d1/config", bytes.NewBufferString(tc.body)))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+			if srv.pushCall {
+				t.Fatal("PushConfig should NOT have been called for invalid params")
+			}
+		})
+	}
+}
+
 // TestStartStreamEndpoint exercises POST /api/devices/{id}/stream.
 func TestStartStreamEndpoint(t *testing.T) {
 	cases := []struct {
