@@ -38,6 +38,7 @@ import (
 type Server struct {
 	cfg     *config.Config
 	db      *sql.DB
+	repos   *persistence.Repos
 	device  *device.Registry
 	stream  *stream.Registry
 	metrics *metrics.Metrics
@@ -82,6 +83,7 @@ func New(cfg *config.Config) (*Server, error) {
 	s := &Server{
 		cfg:             cfg,
 		db:              db,
+		repos:           persistence.NewRepos(db),
 		device:          device.NewRegistry(),
 		stream:          stream.NewRegistry(),
 		metrics:         m,
@@ -89,16 +91,66 @@ func New(cfg *config.Config) (*Server, error) {
 		bus:             audio.NewPCMBus(),
 		ctrl:            control.NewSessionManager(),
 		recordings:      make(map[string]*audio.Recorder),
-		recRepo:         persistence.NewRecordingRepo(db),
-		deviceStatsRepo: persistence.NewDeviceStatsRepo(db),
 		lastStats:       make(map[string]rtp.Stats),
 		lastBitrate:     make(map[string]int64),
 		lastBitrateT:    make(map[string]time.Time),
 		deviceStats:     make(map[string]control.StreamStoppedStats),
+		recRepo:         persistence.NewRecordingRepo(db),
+		deviceStatsRepo: persistence.NewDeviceStatsRepo(db),
 		ctx:             ctx,
 		cancel:          cancel,
 	}
 	return s, nil
+}
+
+// Restore loads persisted state from the DB into runtime registries (spec §20).
+// Loads devices into the device registry and reconciles stale streams:
+// previously ACTIVE/STARTING/RTP_WAIT streams are marked FAILED with
+// FailureServerRestart. Safe to call once after New().
+func (s *Server) Restore() error {
+	// Load devices back into the registry so TOFU-enrolled devices are recognized.
+	devices, err := s.repos.Devices.LoadAll()
+	if err != nil {
+		return fmt.Errorf("load devices: %w", err)
+	}
+	for _, rec := range devices {
+		s.device.Register(rec.Device, rec.CredHash)
+		slog.Info("restore: loaded device", "device_id", rec.Device.DeviceID, "status", rec.Device.Status)
+	}
+
+	// Load streams and reconcile: mark stale (live) streams as FAILED.
+	streams, err := s.repos.Streams.LoadAll()
+	if err != nil {
+		return fmt.Errorf("load streams: %w", err)
+	}
+	for _, rec := range streams {
+		switch stream.StreamState(rec.State) {
+		case stream.StateActive, stream.StateStarting, stream.StateRTPWait:
+			// Stale stream from before restart — mark FAILED.
+			st := stream.New(rec.StreamID, rec.DeviceID, rec.SSRC, rec.Started)
+			st.WithTimeoutConfig(stream.TimeoutConfig{
+				RTPWait:      time.Duration(s.cfg.RTPWaitTimeoutS) * time.Second,
+				RTPDisappear: 1 * time.Second,
+			})
+			_ = st.Start(rec.Started)
+			_ = st.DeviceCommandSent()
+			if stream.StreamState(rec.State) == stream.StateRTPWait {
+				_ = st.StreamStarted(rec.Started)
+			} else if stream.StreamState(rec.State) == stream.StateActive {
+				_ = st.StreamStarted(rec.Started)
+				_ = st.FirstPacket(rec.Started)
+			}
+			_ = st.DeviceRejected(stream.FailureServerRestart)
+			s.stream.Add(st)
+			// Persist the reconciled state.
+			_ = s.repos.Streams.Save(rec.StreamID, rec.DeviceID, string(stream.StateFailed), string(stream.FailureServerRestart), rec.SSRC, rec.Started)
+			slog.Info("restore: marked stale stream failed", "stream_id", rec.StreamID, "device_id", rec.DeviceID, "was", rec.State)
+		default:
+			// COMPLETE/FAILED/CREATED/STOPPING — no runtime registration needed.
+			slog.Info("restore: skipping non-live stream", "stream_id", rec.StreamID, "state", rec.State)
+		}
+	}
+	return nil
 }
 
 // Start begins the control listener and returns when ctx is cancelled or an
@@ -126,6 +178,13 @@ func (s *Server) Start() error {
 			Certificates: []tls.Certificate{cert},
 		})
 		mode = "TLS"
+	}
+
+	// Restore persisted state from a previous run (spec §20): load devices,
+	// reconcile stale streams (mark FAILED with FailureServerRestart).
+	if err := s.Restore(); err != nil {
+		_ = ln.Close()
+		return fmt.Errorf("restore: %w", err)
 	}
 
 	// Start the stream lifecycle monitor (GAP-13/14).
@@ -193,9 +252,9 @@ func (s *Server) Authenticate(ctx context.Context, deviceID, credential string) 
 			DisplayName: deviceID,
 			Status:      "online",
 		}
-		// No credential hash stored for TOFU enrollment (credential is
-		// validated against the shared secret if configured; otherwise open).
+		// Persist TOFU enrollment (spec §20 GAP-15).
 		s.device.Register(d, nil)
+		_ = s.repos.Devices.Save(d, nil)
 		log.Printf("control: enrolled new device %q (TOFU)", deviceID)
 		return nil
 	}
@@ -285,6 +344,7 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 	// Transition to WAITING_FOR_DEVICE -> STARTING
 	_ = st.Start(time.Now())
 	_ = st.DeviceCommandSent()
+	_ = s.repos.Streams.Save(streamID, deviceID, string(stream.StateStarting), "", 0, st.StartedAt)
 
 	// Determine the server IP the device connected to (from the control session)
 	// We don't have direct access to the session here, so use a best-effort:
@@ -318,6 +378,7 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 		// Cleanup on error
 		s.rtp.CloseStream(streamID)
 		s.stream.Remove(streamID)
+		_ = s.repos.Streams.Save(streamID, deviceID, string(stream.StateFailed), string(stream.FailureStartRejected), 0, time.Now())
 		return nil, fmt.Errorf("send start_stream: %w", err)
 	}
 
@@ -326,12 +387,14 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 	case *control.StreamStarted:
 		// Device accepted, transition to RTP_WAIT
 		_ = st.StreamStarted(time.Now())
+		_ = s.repos.Streams.Save(streamID, deviceID, string(stream.StateRTPWait), "", 0, st.StartedAt)
 
 		// Get the jitter buffer and start the audio worker
 		binding, ok := s.rtp.GetStreamBinding(streamID)
 		if !ok {
 			s.rtp.CloseStream(streamID)
 			s.stream.Remove(streamID)
+			_ = s.repos.Streams.Save(streamID, deviceID, string(stream.StateFailed), string(stream.FailureStartRejected), 0, time.Now())
 			return nil, fmt.Errorf("stream binding not found after start")
 		}
 		jb := binding.JitterBuffer()
@@ -386,6 +449,7 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 	case *control.Error:
 		// Device rejected
 		_ = st.DeviceRejected(stream.FailureStartRejected)
+		_ = s.repos.Streams.Save(streamID, deviceID, string(stream.StateFailed), string(stream.FailureStartRejected), 0, time.Now())
 		s.rtp.CloseStream(streamID)
 		s.stream.Remove(streamID)
 		return nil, fmt.Errorf("device rejected start_stream: %s", r.Message)
@@ -394,6 +458,7 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 		_ = st.DeviceRejected(stream.FailureStartRejected)
 		s.rtp.CloseStream(streamID)
 		s.stream.Remove(streamID)
+		_ = s.repos.Streams.Save(streamID, deviceID, string(stream.StateFailed), string(stream.FailureStartRejected), 0, time.Now())
 		return nil, fmt.Errorf("unexpected reply type: %T", msg)
 	}
 }
@@ -421,6 +486,7 @@ func (s *Server) StopStream(ctx context.Context, streamID string) error {
 		s.rtp.CloseStream(streamID)
 		_ = st.Stopped()
 		s.finalizeRecorder(streamID)
+		_ = s.repos.Streams.Save(streamID, st.DeviceID, string(stream.StateComplete), "", 0, time.Now())
 		return fmt.Errorf("send stop_stream: %w", err)
 	}
 
@@ -446,9 +512,11 @@ func (s *Server) StopStream(ctx context.Context, streamID string) error {
 			_ = s.deviceStatsRepo.Save(streamID, st.DeviceID, r.Stats.PacketsSent, r.Stats.BytesSent, r.Stats.DurationMS, r.Stats.EncoderErrors, extraBytes)
 		}
 		_ = st.Stopped()
+		_ = s.repos.Streams.Save(streamID, st.DeviceID, string(stream.StateComplete), "", 0, time.Now())
 		return nil
 	case *control.Error:
 		_ = st.Stopped()
+		_ = s.repos.Streams.Save(streamID, st.DeviceID, string(stream.StateFailed), string(stream.FailureStartRejected), 0, time.Now())
 		return fmt.Errorf("device error on stop: %s", r.Message)
 	default:
 		_ = st.Stopped()
@@ -479,8 +547,6 @@ func (s *Server) finalizeRecorder(streamID string) {
 
 // PCMBus returns the decoded-audio bus for live output (spec §14).
 func (s *Server) PCMBus() *audio.PCMBus { return s.bus }
-
-// newStreamID generates a random stream ID.
 
 // GetStream returns the stream for the given ID.
 func (s *Server) GetStream(streamID string) (*stream.Stream, error) {

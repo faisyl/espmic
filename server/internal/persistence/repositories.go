@@ -66,6 +66,41 @@ func (r *DeviceRepo) CredHash(id string) ([]byte, error) {
 	return hash, nil
 }
 
+// DeviceRecord pairs a device with its credential hash for loading all devices.
+type DeviceRecord struct {
+	Device   device.Device
+	CredHash []byte
+}
+
+// LoadAll returns all persisted devices with their credential hashes (spec §20).
+func (r *DeviceRepo) LoadAll() ([]DeviceRecord, error) {
+	rows, err := r.db.Query(
+		`SELECT device_id,display_name,firmware,capabilities,credential_hash,status,last_seen
+		   FROM devices`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var results []DeviceRecord
+	for rows.Next() {
+		var d device.Device
+		var caps string
+		var hash []byte
+		var ls sql.NullInt64
+		if err := rows.Scan(&d.DeviceID, &d.DisplayName, &d.Firmware, &caps, &hash, &d.Status, &ls); err != nil {
+			return nil, err
+		}
+		if caps != "" {
+			d.Capabilities = strings.Split(caps, ",")
+		}
+		if ls.Valid {
+			d.LastSeen = time.UnixMilli(ls.Int64)
+		}
+		results = append(results, DeviceRecord{Device: d, CredHash: hash})
+	}
+	return results, rows.Err()
+}
+
 // StreamRepo persists stream metadata (spec §6, §20).
 type StreamRepo struct {
 	db *sql.DB
@@ -83,6 +118,40 @@ func (r *StreamRepo) Save(id, deviceID, state, reason string, ssrc uint32, start
 		   state=excluded.state, reason=excluded.reason`,
 		id, deviceID, int64(ssrc)&0xffffffff, state, st, reason)
 	return err
+}
+
+// StreamRecord pairs a stream with its fields for loading all streams.
+type StreamRecord struct {
+	StreamID string
+	DeviceID string
+	SSRC     uint32
+	State    string
+	Reason   string
+	Started  time.Time
+}
+
+// LoadAll returns all persisted streams (spec §20 restart reconciliation).
+func (r *StreamRepo) LoadAll() ([]StreamRecord, error) {
+	rows, err := r.db.Query(
+		`SELECT stream_id,device_id,ssrc,state,reason,started_at
+		   FROM streams`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var results []StreamRecord
+	for rows.Next() {
+		var rec StreamRecord
+		var st sql.NullInt64
+		if err := rows.Scan(&rec.StreamID, &rec.DeviceID, &rec.SSRC, &rec.State, &rec.Reason, &st); err != nil {
+			return nil, err
+		}
+		if st.Valid {
+			rec.Started = time.UnixMilli(st.Int64)
+		}
+		results = append(results, rec)
+	}
+	return results, rows.Err()
 }
 
 // RecordingRepo persists recording metadata (spec §6, §20).

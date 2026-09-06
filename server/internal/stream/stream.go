@@ -43,6 +43,7 @@ const (
 	FailureRTPTimeout     FailureReason = "ACTIVE->RTP_TIMEOUT"
 	FailureDeviceDisc     FailureReason = "ACTIVE->DEVICE_DISCONNECTED"
 	FailureDecodeError    FailureReason = "ACTIVE->DECODE_ERROR"
+	FailureServerRestart  FailureReason = "FAILED->SERVER_RESTART"
 )
 
 // Stream holds the authoritative lifecycle state for one stream (spec §6, §17).
