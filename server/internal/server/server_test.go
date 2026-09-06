@@ -319,7 +319,7 @@ func TestStreamMonitorRTPWaitTimeout(t *testing.T) {
 	defer cancel()
 
 	// Start the server (starts streamMonitor)
-	go func() { _ = srv.Start() }()
+	go srv.streamMonitor() // monitor only; avoids fixed-port bind races across tests
 	defer srv.cancel()
 
 	// Create stream with short RTPWait timeout (100ms)
@@ -368,7 +368,7 @@ func TestStreamMonitorRTPDisappeared(t *testing.T) {
 	defer cancel()
 
 	// Start the server (starts streamMonitor)
-	go func() { _ = srv.Start() }()
+	go srv.streamMonitor() // monitor only; avoids fixed-port bind races across tests
 	defer srv.cancel()
 
 	// Create stream with short RTPDisappear timeout (50ms)
