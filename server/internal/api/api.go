@@ -12,6 +12,8 @@ import (
 	"espmic/server/internal/audio"
 	"espmic/server/internal/config"
 	"espmic/server/internal/control"
+	"espmic/server/internal/device"
+	"espmic/server/internal/rtp"
 	"espmic/server/internal/stream"
 )
 
@@ -28,6 +30,10 @@ type Server interface {
 	PushConfig(ctx context.Context, deviceID string, cfg control.SetConfig) (control.Message, error)
 	StartStream(ctx context.Context, deviceID string, purpose string) (map[string]any, error)
 	StopStream(ctx context.Context, streamID string) error
+	GetStream(streamID string) (*stream.Stream, error)
+	DeviceGet(deviceID string) (*device.Device, error)
+	RTPStreamStats(streamID string) (rtp.Stats, bool)
+	StreamPort(streamID string) (uint16, bool)
 }
 
 // Handlers holds the server reference and implements each §15 endpoint.
@@ -91,7 +97,12 @@ func (h *Handlers) handleDevice(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing id"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"device_id": id})
+	dev, err := h.srv.DeviceGet(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, dev)
 }
 
 func (h *Handlers) handleStartStream(w http.ResponseWriter, r *http.Request) {
@@ -229,7 +240,23 @@ func (h *Handlers) handleStream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing id"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"stream_id": id, "state": "unknown"})
+	st, err := h.srv.GetStream(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
+		return
+	}
+
+	// Get port from RTP receiver
+	port, _ := h.srv.StreamPort(id)
+
+	// Omit SSRC as per spec (device-learned, 0/unknown on stream object)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"stream_id":   st.StreamID,
+		"device_id":   st.DeviceID,
+		"state":       st.State(),
+		"port":        port,
+		"started_at":  st.StartedAt.UTC().Format(time.RFC3339),
+	})
 }
 
 func (h *Handlers) handleStreams(w http.ResponseWriter, _ *http.Request) {
@@ -242,7 +269,20 @@ func (h *Handlers) handleStreamStats(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing id"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"stream_id": id})
+	stats, ok := h.srv.RTPStreamStats(id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "stream not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"stream_id":          id,
+		"packets_received":   stats.Received,
+		"packets_lost":       stats.Lost,
+		"packets_duplicate":  stats.Duplicate,
+		"packets_reordered":  stats.Reordered,
+		"packets_late":       stats.Late,
+		"jitter_ms":          stats.JitterMS,
+	})
 }
 
 func (h *Handlers) handleRecording(w http.ResponseWriter, r *http.Request) {

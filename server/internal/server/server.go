@@ -390,6 +390,31 @@ func (s *Server) StopStream(ctx context.Context, streamID string) error {
 func (s *Server) PCMBus() *audio.PCMBus { return s.bus }
 
 // newStreamID generates a random stream ID.
+
+// GetStream returns the stream for the given ID.
+func (s *Server) GetStream(streamID string) (*stream.Stream, error) {
+	return s.stream.Get(streamID)
+}
+
+// DeviceGet returns the device for the given ID.
+func (s *Server) DeviceGet(deviceID string) (*device.Device, error) {
+	d, err := s.device.Get(deviceID)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// RTPStreamStats returns the RTP statistics for a stream.
+func (s *Server) RTPStreamStats(streamID string) (rtp.Stats, bool) {
+	return s.rtp.StreamStats(streamID)
+}
+
+// StreamPort returns the UDP port for a stream.
+func (s *Server) StreamPort(streamID string) (uint16, bool) {
+	return s.rtp.StreamPort(streamID)
+}
+
 func newStreamID() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])

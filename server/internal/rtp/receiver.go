@@ -42,6 +42,11 @@ func (b *streamBinding) JitterBuffer() *JitterBuffer {
 	return b.jb
 }
 
+// Port returns the UDP port for this stream binding.
+func (b *streamBinding) Port() uint16 {
+	return b.port
+}
+
 // NewReceiver returns a receiver wired to the shared metrics surface.
 func NewReceiver(m *metrics.Metrics) *Receiver {
 	return &Receiver{
@@ -112,6 +117,17 @@ func (r *Receiver) GetStreamBinding(streamID string) (*streamBinding, bool) {
 		return nil, false
 	}
 	return b, true
+}
+
+// StreamPort returns the UDP port for streamID.
+func (r *Receiver) StreamPort(streamID string) (uint16, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, ok := r.streams[streamID]
+	if !ok {
+		return 0, false
+	}
+	return b.Port(), true
 }
 
 // SetWorkerCancel sets the worker cancel function for a stream.

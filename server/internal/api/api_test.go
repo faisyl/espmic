@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"espmic/server/internal/audio"
 	"espmic/server/internal/config"
 	"espmic/server/internal/control"
-	streamPkg "espmic/server/internal/stream"
+	"espmic/server/internal/device"
+	"espmic/server/internal/rtp"
+	"espmic/server/internal/stream"
 )
 
 // fakeSrv is a minimal Server implementation for API tests (spec §15). Its
@@ -48,6 +51,23 @@ func (f *fakeSrv) StartStream(_ context.Context, deviceID, purpose string) (map[
 func (f *fakeSrv) StopStream(_ context.Context, streamID string) error {
 	f.stopCall = true
 	return f.stopErr
+}
+func (f *fakeSrv) GetStream(streamID string) (*stream.Stream, error) {
+	s := stream.New(streamID, "test-device", 0, time.Time{})
+	_ = s.Start(time.Time{})
+	_ = s.DeviceCommandSent()
+	_ = s.StreamStarted(time.Time{})
+	_ = s.FirstPacket(time.Time{})
+	return s, nil
+}
+func (f *fakeSrv) RTPStreamStats(streamID string) (rtp.Stats, bool) {
+	return rtp.Stats{Received: 100, Lost: 2, JitterMS: 0.5}, true
+}
+func (f *fakeSrv) StreamPort(streamID string) (uint16, bool) {
+	return 5004, true
+}
+func (f *fakeSrv) DeviceGet(deviceID string) (*device.Device, error) {
+	return &device.Device{DeviceID: deviceID, DisplayName: deviceID, Status: "online"}, nil
 }
 
 // TestHealth verifies the S0 health endpoint (spec §15).
@@ -334,7 +354,7 @@ func TestStartStreamEndpoint(t *testing.T) {
 			name:     "conflict maps to 409",
 			deviceID: "d1",
 			body:     `{"purpose":"test"}`,
-			startErr: streamPkg.ErrIllegalTransition,
+			startErr: stream.ErrIllegalTransition,
 			wantCode: http.StatusConflict,
 			wantBody: `illegal lifecycle transition`,
 		},
@@ -385,14 +405,14 @@ func TestStopStreamEndpoint(t *testing.T) {
 		{
 			name:     "stream not found maps to 404",
 			streamID: "strm-1",
-			stopErr:  streamPkg.ErrStreamNotFound,
+			stopErr:  stream.ErrStreamNotFound,
 			wantCode: http.StatusNotFound,
 			wantBody: `unknown stream`,
 		},
 		{
 			name:     "illegal transition maps to 409",
 			streamID: "strm-1",
-			stopErr:  streamPkg.ErrIllegalTransition,
+			stopErr:  stream.ErrIllegalTransition,
 			wantCode: http.StatusConflict,
 			wantBody: `illegal lifecycle transition`,
 		},
