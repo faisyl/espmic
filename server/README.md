@@ -177,71 +177,136 @@ curl localhost:8080/health   # -> {"status":"ok","version":"dev","commit":"a1b2c
 The published `ghcr.io/faisyl/espmic-server` images are stamped by GoReleaser at
 release time (see `.goreleaser.yaml`).
 
-## API (spec §15)
+## HTTP API Reference (spec §15, §16, §18)
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /health` | Health check |
-| `GET /api/devices` | List devices |
-| `GET /api/devices/{id}` | Device metadata |
-| `POST /api/devices/{id}/stream` | Start managed stream (§16) |
-| `POST /api/devices/{id}/config` | Push runtime config to a connected device (§10) |
-| `DELETE /api/streams/{id}` | Stop stream |
-| `GET /api/streams/{id}` | Stream state |
-| `GET /api/streams/{id}/stats` | RTP/decoder statistics |
-| `GET /api/recordings/{id}` | Recording metadata |
-| `GET /api/recordings/{id}/download` | Retrieve recording |
-| `GET /api/metrics` | Statistics (§18) |
+Base URL: `http://<server>:8080`. All responses are JSON.
 
-### Push runtime config (POST /api/devices/{id}/config)
+### GET /health
 
-Push a `set_config` command to a device's live control session. The server
-validates the request, correlates the device's `status`/`error` reply by
-`request_id`, and returns the result.
+Health check + build identity.
+
+**Response 200:**
+```json
+{"status":"ok","version":"dev","commit":"none","date":"unknown"}
+```
+
+---
+
+### Devices
+
+**GET /api/devices** — List all enrolled devices.
+Response: array of device objects (id, state, last_seen).
+
+**GET /api/devices/{id}** — Device metadata by id.
+Path param: `id` — device ID.
+**Response 200:** device object. **404:** device not found.
+
+**GET /api/devices/{id}/status** — Live device status (spec §10 get_status).
+Path param: `id` — device ID. Sends `get_status` over the live control session and returns the device's reply.
+**Response 200:** `*control.Status` (see below). **404:** device not connected. **504:** device timeout.
+
+**POST /api/devices/{id}/config** — Push runtime config to a connected device (set_config).
+Path param: `id` — device ID.
 
 **Request body** (JSON, at least one field required):
-
-| Field | Type | Range | Description |
-|---|---|---|---|
-| `default_bitrate` | int | ≥ 0 | Apply bitrate immediately (spec §10) |
-| `server_host` | string | non-empty | Persisted in NVS, applied on next boot |
-| `i2s_bclk` | int | 0–47 | I2S bit-clock GPIO; persisted, applied on next boot |
-| `i2s_ws` | int | 0–47 | I2S word-select GPIO |
-| `i2s_din` | int | 0–47 | I2S serial data-in GPIO |
-
-**Responses:**
-
-| Status | Meaning |
-|---|---|
-| `200 OK` | Device echoed its new status |
-| `400 Bad Request` | Invalid JSON or field out of range (server-side validation) |
-| `404 Not Found` | Device is not currently connected |
-| `502 Bad Gateway` | Device explicitly rejected the config (`error` reply) |
-| `504 Gateway Timeout` | Device did not reply within the 5 s deadline |
-
-**curl examples:**
-
-```sh
-# Set I2S pins for a connected device
-curl -s -X POST http://localhost:8080/api/devices/esp32-001/config \
-  -H 'Content-Type: application/json' \
-  -d '{"i2s_bclk":5,"i2s_ws":6,"i2s_din":4}'
-# -> {"type":"status","state":"IDLE","stream_id":"...",...}
-
-# Change bitrate and server host
-curl -s -X POST http://localhost:8080/api/devices/esp32-001/config \
-  -H 'Content-Type: application/json' \
-  -d '{"default_bitrate":256000,"server_host":"audio.new.local"}'
-
-# Device not connected -> 404
-# -> {"error":"device not connected"}
-
-# Invalid pin -> 400
-curl -s -X POST http://localhost:8080/api/devices/esp32-001/config \
-  -H 'Content-Type: application/json' \
-  -d '{"i2s_bclk":48}'
-# -> {"error":"control: i2s_bclk out of range 0..47: 48"}
+```json
+{
+  "default_bitrate": 64000,
+  "server_host": "audio.local",
+  "i2s_bclk": 5,
+  "i2s_ws": 6,
+  "i2s_din": 4,
+  "fec": true,
+  "dtx": false,
+  "complexity": 8,
+  "bitrate": 64000,
+  "vbr": true,
+  "frame_ms": 20
+}
 ```
+Field constraints (server validates): I2S pins 0–47, complexity 0–10, frame_ms ∈ {10,20,40,60}, bitrate ≥ 0. Unknown fields silently ignored (Go default).
+
+**Response 200:** device echoed `*control.Status` (new state after apply). **400:** validation error. **404:** device not connected. **502:** device rejected config. **504:** device timeout.
+
+*Status response shape (from `control.Status`):*
+```json
+{"type":"status","request_id":"...","status":"ok","state":"IDLE","fields":{"i2s_bclk":5}}
+```
+
+---
+
+### Streams
+
+**POST /api/devices/{id}/stream** — Start a managed stream (spec §16).
+Path param: `id` — device ID.
+
+**Request body:**
+```json
+{"purpose":"listen","recording":{"enabled":true,"format":"wav"}}
+```
+
+**Response 200:** stream object with `stream_id`, `device_id`, `state`, `port`, `started_at`. **404:** device not connected. **408/504:** device timeout. **409:** illegal transition.
+
+**GET /api/streams** — List all active streams.
+Response: array of stream objects.
+
+**GET /api/streams/{id}** — Stream state by id.
+Response 200:
+```json
+{"stream_id":"...","device_id":"...","state":"STREAMING","port":60000,"started_at":"2026-09-06T12:00:00Z"}
+```
+Omits SSRC per spec (device-learned, 0/unknown on stream object).
+
+**GET /api/streams/{id}/stats** — RTP + decoder statistics for a stream.
+Response 200 — three top-level groups for backward-compat + namespaced objects:
+```json
+{
+  "stream_id": "...",
+  "packets_received": 1200,
+  "packets_lost": 3,
+  "packets_duplicate": 1,
+  "packets_reordered": 2,
+  "packets_late": 5,
+  "jitter_ms": 1.2,
+  "rtp": {
+    "packets_received": 1200,
+    "packets_lost": 3,
+    "packets_duplicate": 1,
+    "packets_reordered": 2,
+    "packets_late": 5,
+    "jitter_ms": 1.2
+  },
+  "device_final": {
+    "packets_sent": 1198,
+    "bytes_sent": 1480000,
+    "duration_ms": 12000,
+    "encoder_errors": 0
+  }
+}
+```
+- Top-level `packets_*`/`jitter_ms` — backward-compat (same keys as legacy `rtp`).
+- `rtp` — namespaced RTP counters (`rtp.Received/Lost/Duplicate/Reordered/Late/JitterMS`).
+- `device_final` — present only while the stream is active; omitted after stream stop (GAP-04/19).
+
+**DELETE /api/streams/{id}** — Stop a stream.
+Response 200: `{"stream_id":"...","state":"stopped"}`. **404:** stream not found. **409:** illegal transition. **504:** device timeout.
+
+---
+
+### Recordings
+
+**GET /api/recordings/{id}** — Recording metadata by id.
+Response 200: recording object. **404:** not found.
+
+**GET /api/recordings/{id}/download** — Download a recording file.
+Response: file binary (WAV). **404:** not found.
+
+---
+
+### Metrics
+
+**GET /api/metrics** — Server-wide statistics snapshot (spec §18).
+Response 200: metrics object (counters/gauges).
 
 ## Dependencies (pinned in go.mod)
 
