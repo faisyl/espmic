@@ -486,6 +486,20 @@ func (s *Server) StreamPort(streamID string) (uint16, bool) {
 	return s.rtp.StreamPort(streamID)
 }
 
+// GetDeviceStatus sends a get_status command to the device's live control
+// session and awaits the correlated status (success) or error (rejection).
+func (s *Server) GetDeviceStatus(ctx context.Context, deviceID string) (control.Message, error) {
+	// Verify device is connected
+	if _, err := s.device.Get(deviceID); err != nil {
+		return nil, fmt.Errorf("device not found: %w", err)
+	}
+
+	requestID := newRequestID()
+	req := control.NewGetStatus(requestID)
+
+	return s.ctrl.SendGetStatus(ctx, deviceID, req)
+}
+
 func newStreamID() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])

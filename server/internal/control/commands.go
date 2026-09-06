@@ -46,8 +46,8 @@ func (s *CommandService) BuildStopStream(requestID, streamID string) *StopStream
 }
 
 // BuildGetStatus constructs a get_status command (spec §8).
-func (s *CommandService) BuildGetStatus() *GetStatus {
-	return NewGetStatus()
+func (s *CommandService) BuildGetStatus(requestID string) *GetStatus {
+	return NewGetStatus(requestID)
 }
 
 // Await registers a correlation channel for stream_id and returns it. The

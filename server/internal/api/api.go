@@ -44,6 +44,8 @@ type Server interface {
 	// Recording methods
 	GetRecording(recordingID string) (map[string]any, error)
 	DownloadRecording(recordingID string) (string, error)
+	// Device status (GAP-02/03)
+	GetDeviceStatus(ctx context.Context, deviceID string) (control.Message, error)
 }
 
 // Handlers holds the server reference and implements each §15 endpoint.
@@ -77,6 +79,7 @@ func RegisterRoutes(mux *http.ServeMux, cfg *config.Config, srv Server) {
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("GET /api/devices", h.handleDevices)
 	mux.HandleFunc("GET /api/devices/{id}", h.handleDevice)
+	mux.HandleFunc("GET /api/devices/{id}/status", h.handleDeviceStatus)
 	mux.HandleFunc("POST /api/devices/{id}/stream", h.handleStartStream)
 	mux.HandleFunc("POST /api/devices/{id}/config", h.handleConfig)
 	mux.HandleFunc("DELETE /api/streams/{id}", h.handleStopStream)
@@ -113,6 +116,39 @@ func (h *Handlers) handleDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, dev)
+}
+
+// handleDeviceStatus sends a get_status command to the device's live control
+// session and returns the device's status (spec §10 get_status).
+func (h *Handlers) handleDeviceStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing device id"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), streamTimeout)
+	defer cancel()
+
+	msg, err := h.srv.GetDeviceStatus(ctx, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, control.ErrNotConnected):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not connected"})
+		case errors.Is(err, context.DeadlineExceeded):
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "device did not respond to get_status"})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
+	// msg is either *control.Status (success) or *control.Error (device rejection)
+	writeJSON(w, http.StatusOK, msg)
 }
 
 func (h *Handlers) handleStartStream(w http.ResponseWriter, r *http.Request) {

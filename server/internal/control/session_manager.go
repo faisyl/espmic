@@ -242,6 +242,45 @@ func (m *SessionManager) SendStopStream(ctx context.Context, deviceID string, re
 	}
 }
 
+// SendGetStatus sends a get_status command and awaits the correlated status/error reply.
+func (m *SessionManager) SendGetStatus(ctx context.Context, deviceID string, req *GetStatus) (Message, error) {
+	if req == nil {
+		return nil, errors.New("control: nil get_status")
+	}
+	if req.RequestID == "" {
+		return nil, errors.New("control: get_status requires request_id")
+	}
+	s, ok := m.session(deviceID)
+	if !ok {
+		return nil, ErrNotConnected
+	}
+
+	m.mu.Lock()
+	if _, dup := m.pending[req.RequestID]; dup {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("control: duplicate await for %q", req.RequestID)
+	}
+	ch := make(chan Message, 1)
+	m.pending[req.RequestID] = ch
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.pending, req.RequestID)
+		m.mu.Unlock()
+	}()
+
+	if err := s.Send(req); err != nil {
+		return nil, err
+	}
+
+	select {
+	case msg := <-ch:
+		return msg, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 // deliverStream routes StreamStarted/StreamStopped/Error (with RequestID) to awaiting stream caller.
 func (m *SessionManager) deliverStream(msg Message) bool {
 	var rid string

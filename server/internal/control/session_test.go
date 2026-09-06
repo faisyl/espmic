@@ -238,7 +238,7 @@ func TestCommandServiceBuildCommands(t *testing.T) {
 	if st.StreamID != "s1" {
 		t.Fatalf("stop_stream: %+v", st)
 	}
-	gs := cs.BuildGetStatus()
+	gs := cs.BuildGetStatus("req-test")
 	if gs.Kind() != TypeGetStatus {
 		t.Fatalf("get_status: %+v", gs)
 	}

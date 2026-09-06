@@ -150,7 +150,7 @@ func TestMessagesRoundtrip(t *testing.T) {
 		{"stream_started", NewStreamStarted("req-1", "uuid")},
 		{"stop_stream", NewStopStream("req-1", "uuid")},
 		{"stream_stopped", NewStreamStopped("req-1", "uuid", nil)},
-		{"get_status", NewGetStatus()},
+		{"get_status", NewGetStatus("req-test")},
 		{"status", NewStatus("ok", map[string]any{"battery": 88})},
 		{"error", NewError(7, "boom")},
 	}

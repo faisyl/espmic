@@ -180,10 +180,13 @@ func (m *StreamStopped) Kind() string { return TypeStreamStopped }
 
 // GetStatus requests device status (server -> device).
 type GetStatus struct {
-	Type string `json:"type"`
+	Type      string `json:"type"`
+	RequestID string `json:"request_id,omitempty"`
 }
 
-func NewGetStatus() *GetStatus { return &GetStatus{Type: TypeGetStatus} }
+func NewGetStatus(requestID string) *GetStatus {
+	return &GetStatus{Type: TypeGetStatus, RequestID: requestID}
+}
 
 func (m *GetStatus) Kind() string { return TypeGetStatus }
 

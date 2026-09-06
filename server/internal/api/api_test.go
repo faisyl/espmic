@@ -75,6 +75,9 @@ func (f *fakeSrv) GetRecording(recordingID string) (map[string]any, error) {
 func (f *fakeSrv) DownloadRecording(recordingID string) (string, error) {
 	return "", nil
 }
+func (f *fakeSrv) GetDeviceStatus(_ context.Context, deviceID string) (control.Message, error) {
+	return &control.Status{Type: control.TypeStatus, RequestID: "req-test", Status: "ok", State: "IDLE"}, nil
+}
 
 // TestHealth verifies the S0 health endpoint (spec §15).
 func TestHealth(t *testing.T) {
