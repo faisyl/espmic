@@ -35,8 +35,8 @@ type Recorder struct {
 // NewRecorder returns a recorder writing to dir/base.{wav|flac}. format must be
 // "wav" or "flac" (spec §13).
 func NewRecorder(format, dir, base string, rate, channels int) (*Recorder, error) {
-	if format != "wav" && format != "flac" {
-		return nil, fmt.Errorf("recorder: unsupported format %q (spec §13: wav|flac)", format)
+	if format != "wav" {
+		return nil, fmt.Errorf("recorder: unsupported format %q (only WAV is supported; FLAC not implemented)", format)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -45,9 +45,7 @@ func NewRecorder(format, dir, base string, rate, channels int) (*Recorder, error
 }
 
 // Begin opens the output file and writes the header (spec §13). For WAV this
-// reserves the size fields; for FLAC we write a minimal fLaC streaminfo-less
-// container (sufficient for the S2 recorder contract; a full FLAC encoder is
-// out of scope and noted for S3).
+// reserves the size fields.
 func (r *Recorder) Begin(start time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -61,11 +59,7 @@ func (r *Recorder) Begin(start time.Time) error {
 		return err
 	}
 	r.wavFile = f
-	if r.format == "wav" {
-		r.writeWAVHeader(f)
-	} else {
-		r.writeFLACHeader(f)
-	}
+	r.writeWAVHeader(f)
 	return nil
 }
 
@@ -118,9 +112,7 @@ func (r *Recorder) Finalize(end time.Time) (string, int64, error) {
 	if r.wavFile == nil {
 		return "", 0, errors.New("recorder: never begun")
 	}
-	if r.format == "wav" {
-		r.patchWAVSizes(r.wavFile)
-	}
+	r.patchWAVSizes(r.wavFile)
 	uri := r.wavFile.Name()
 	if err := r.wavFile.Close(); err != nil {
 		return uri, r.bytes, err
@@ -157,12 +149,6 @@ func (r *Recorder) patchWAVSizes(f *os.File) {
 	b.Reset()
 	_ = binary.Write(&b, binary.LittleEndian, uint32(r.bytes))
 	_, _ = f.WriteAt(b.Bytes(), 40)
-}
-
-// ---- FLAC (minimal container) ----
-
-func (r *Recorder) writeFLACHeader(f *os.File) {
-	_, _ = f.Write([]byte("fLaC"))
 }
 
 func crc32Update(crc uint32, pcm []int16) uint32 {

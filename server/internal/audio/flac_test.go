@@ -15,11 +15,11 @@ import (
 func TestFlacRecorderOutput(t *testing.T) {
 	buf := &bytes.Buffer{}
 	info := &meta.StreamInfo{
-		BlockSizeMin: 4096,
-		BlockSizeMax: 4096,
-		NChannels:    2,
+		BlockSizeMin:  4096,
+		BlockSizeMax:  4096,
+		NChannels:     2,
 		BitsPerSample: 16,
-		SampleRate:   48000,
+		SampleRate:    48000,
 	}
 	enc, err := flac.NewEncoder(buf, info)
 	if err != nil {

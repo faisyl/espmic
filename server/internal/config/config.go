@@ -36,6 +36,9 @@ type Config struct {
 
 	// DBPath is the SQLite database path (spec §20).
 	DBPath string
+
+	// RecordingsDir is the directory where recording files are stored.
+	RecordingsDir string
 }
 
 // Load builds a Config from defaults overridden by environment variables.
@@ -50,6 +53,7 @@ func Load() *Config {
 		JitterTargetMS:   envInt("ESPMIC_JITTER_TARGET_MS", 60),
 		RTPWaitTimeoutS:  envInt("ESPMIC_RTP_WAIT_TIMEOUT_S", 5),
 		DBPath:           envStr("ESPMIC_DB_PATH", "espmic.db"),
+		RecordingsDir:    envStr("ESPMIC_RECORDINGS_DIR", "recordings"),
 	}
 }
 

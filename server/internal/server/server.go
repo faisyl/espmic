@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"espmic/server/internal/api"
 	"espmic/server/internal/audio"
 	"espmic/server/internal/config"
 	"espmic/server/internal/control"
@@ -43,9 +44,12 @@ type Server struct {
 	bus     *audio.PCMBus
 	ctrl    *control.SessionManager
 
-	httpServer *http.Server
-	controlLn  net.Listener
-	streamsMu  sync.RWMutex
+	httpServer   *http.Server
+	controlLn    net.Listener
+	streamsMu    sync.RWMutex
+	recordings   map[string]*audio.Recorder // streamID -> Recorder
+	recordingsMu sync.Mutex
+	recRepo      *persistence.RecordingRepo
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -64,16 +68,18 @@ func New(cfg *config.Config) (*Server, error) {
 
 	m := metrics.New()
 	s := &Server{
-		cfg:     cfg,
-		db:      db,
-		device:  device.NewRegistry(),
-		stream:  stream.NewRegistry(),
-		metrics: m,
-		rtp:     rtp.NewReceiver(m),
-		bus:     audio.NewPCMBus(),
-		ctrl:    control.NewSessionManager(),
-		ctx:     ctx,
-		cancel:  cancel,
+		cfg:        cfg,
+		db:         db,
+		device:     device.NewRegistry(),
+		stream:     stream.NewRegistry(),
+		metrics:    m,
+		rtp:        rtp.NewReceiver(m),
+		bus:        audio.NewPCMBus(),
+		ctrl:       control.NewSessionManager(),
+		recordings: make(map[string]*audio.Recorder),
+		recRepo:    persistence.NewRecordingRepo(db),
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 	return s, nil
 }
@@ -234,7 +240,7 @@ func (s *Server) PushConfig(ctx context.Context, deviceID string, cfg control.Se
 // StartStream creates a new stream, binds RTP port, registers it, sends
 // start_stream to the device, and awaits stream_started. On success, marks
 // stream ACTIVE and returns stream info. On failure, cleans up and returns error.
-func (s *Server) StartStream(ctx context.Context, deviceID string, purpose string) (map[string]any, error) {
+func (s *Server) StartStream(ctx context.Context, deviceID string, purpose string, rec api.RecordingConfig) (map[string]any, error) {
 	// Verify device is connected
 	if _, err := s.device.Get(deviceID); err != nil {
 		return nil, fmt.Errorf("device not found: %w", err)
@@ -331,6 +337,30 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 		})
 		go worker.Start(workerCtx)
 
+		// If recording enabled, create and start recorder (subscribed to PCM bus)
+		if rec.Enabled {
+			format := rec.Format
+			if format == "" {
+				format = "wav"
+			}
+			recorder, err := audio.NewRecorder(format, s.cfg.RecordingsDir, streamID, 48000, 2)
+			if err != nil {
+				slog.Error("recorder: failed to create", "stream_id", streamID, "err", err)
+			} else {
+				if err := recorder.Begin(time.Now()); err != nil {
+					slog.Error("recorder: failed to begin", "stream_id", streamID, "err", err)
+				} else {
+					s.bus.Subscribe(recorder)
+					s.recordingsMu.Lock()
+					s.recordings[streamID] = recorder
+					s.recordingsMu.Unlock()
+					// Persist recording metadata
+					recID := streamID + "-rec"
+					_ = s.recRepo.Create(recID, streamID, 48000, 2, "opus", time.Now())
+				}
+			}
+		}
+
 		return map[string]any{
 			"stream_id": streamID,
 			"port":      port,
@@ -373,11 +403,15 @@ func (s *Server) StopStream(ctx context.Context, streamID string) error {
 		// Still close RTP and mark stopped
 		s.rtp.CloseStream(streamID)
 		_ = st.Stopped()
+		s.finalizeRecorder(streamID)
 		return fmt.Errorf("send stop_stream: %w", err)
 	}
 
 	// Close RTP (this also cancels the worker via CloseStream)
 	s.rtp.CloseStream(streamID)
+
+	// Finalize recorder (if any) before marking stream stopped
+	s.finalizeRecorder(streamID)
 
 	// Check reply
 	switch r := msg.(type) {
@@ -391,6 +425,27 @@ func (s *Server) StopStream(ctx context.Context, streamID string) error {
 		_ = st.Stopped()
 		return fmt.Errorf("unexpected reply type: %T", msg)
 	}
+}
+
+// finalizeRecorder finalizes and removes the recorder for a stream (idempotent).
+func (s *Server) finalizeRecorder(streamID string) {
+	s.recordingsMu.Lock()
+	rec, ok := s.recordings[streamID]
+	if !ok {
+		s.recordingsMu.Unlock()
+		return
+	}
+	delete(s.recordings, streamID)
+	s.recordingsMu.Unlock()
+
+	s.bus.Unsubscribe(rec)
+	uri, bytes, err := rec.Finalize(time.Now())
+	if err != nil {
+		slog.Error("recorder: finalize failed", "stream_id", streamID, "err", err)
+		return
+	}
+	recID := streamID + "-rec"
+	_ = s.recRepo.Finalize(recID, time.Now(), bytes, uri)
 }
 
 // PCMBus returns the decoded-audio bus for live output (spec §14).
@@ -487,9 +542,61 @@ func (s *Server) OnDeviceDisconnect(deviceID string) {
 
 // cleanupStreamByID closes RTP resources and removes the stream from the registry by ID.
 // Idempotent — safe if stream already gone (e.g., double teardown from monitor + disconnect race).
+// Also finalizes any associated recorder.
 func (s *Server) cleanupStreamByID(streamID string) {
 	s.rtp.CloseStream(streamID)
 	s.stream.Remove(streamID)
+	s.finalizeRecorder(streamID)
+}
+
+// GetRecording returns recording metadata by recording ID.
+func (s *Server) GetRecording(recordingID string) (map[string]any, error) {
+	// Query the recording from the database
+	row := s.db.QueryRow(
+		`SELECT recording_id,stream_id,sample_rate,channels,codec,start_time,end_time,bytes_stored,uri
+		 FROM recordings WHERE recording_id=?`, recordingID)
+	var recID, streamID, codec string
+	var sampleRate, channels int
+	var startTime, endTime sql.NullInt64
+	var bytesStored int64
+	var uri sql.NullString
+	if err := row.Scan(&recID, &streamID, &sampleRate, &channels, &codec, &startTime, &endTime, &bytesStored, &uri); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("recording not found")
+		}
+		return nil, err
+	}
+	result := map[string]any{
+		"recording_id": recID,
+		"stream_id":    streamID,
+		"sample_rate":  sampleRate,
+		"channels":     channels,
+		"codec":        codec,
+		"bytes_stored": bytesStored,
+	}
+	if startTime.Valid {
+		result["start_time"] = time.UnixMilli(startTime.Int64).UTC().Format(time.RFC3339)
+	}
+	if endTime.Valid {
+		result["end_time"] = time.UnixMilli(endTime.Int64).UTC().Format(time.RFC3339)
+	}
+	if uri.Valid {
+		result["uri"] = uri.String
+	}
+	return result, nil
+}
+
+// DownloadRecording returns the file path for a recording.
+func (s *Server) DownloadRecording(recordingID string) (string, error) {
+	rec, err := s.GetRecording(recordingID)
+	if err != nil {
+		return "", err
+	}
+	uri, ok := rec["uri"].(string)
+	if !ok || uri == "" {
+		return "", fmt.Errorf("recording file not available")
+	}
+	return uri, nil
 }
 
 func (s *Server) Close() error {

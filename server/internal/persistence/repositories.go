@@ -90,6 +90,11 @@ type RecordingRepo struct {
 	db *sql.DB
 }
 
+// NewRecordingRepo creates a new RecordingRepo.
+func NewRecordingRepo(db *sql.DB) *RecordingRepo {
+	return &RecordingRepo{db: db}
+}
+
 func (r *RecordingRepo) Create(recID, streamID string, sampleRate, channels int, codec string, start time.Time) error {
 	_, err := r.db.Exec(
 		`INSERT INTO recordings(recording_id,stream_id,sample_rate,channels,codec,start_time,bytes_stored)

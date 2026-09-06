@@ -174,11 +174,11 @@ func TestInteropMalformedNoCrash(t *testing.T) {
 	defer conn.Close()
 
 	malformed := [][]byte{
-		{},                        // empty
-		{0x00},                    // 1 byte
-		{0x80, 0x6f},              // 2 bytes
-		{0x80, 0x6f, 0x00, 0x01},  // 4 bytes
-		make([]byte, 2048),        // all zeros, large
+		{},                       // empty
+		{0x00},                   // 1 byte
+		{0x80, 0x6f},             // 2 bytes
+		{0x80, 0x6f, 0x00, 0x01}, // 4 bytes
+		make([]byte, 2048),       // all zeros, large
 		{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // valid-header empty payload
 	}
 	for _, m := range malformed {

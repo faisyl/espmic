@@ -17,6 +17,13 @@ import (
 	"espmic/server/internal/stream"
 )
 
+// RecordingConfig holds optional recording parameters for start_stream API.
+// Format must be "wav" (only supported format; "flac" rejected with 400).
+type RecordingConfig struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	Format  string `json:"format,omitempty"` // "wav" only
+}
+
 // streamTimeout bounds how long we wait for stream_started/stream_stopped
 // before reporting a timeout (504).
 const streamTimeout = 5 * time.Second
@@ -28,12 +35,15 @@ type Server interface {
 	MetricsSurface() interface{}
 	PCMBus() *audio.PCMBus
 	PushConfig(ctx context.Context, deviceID string, cfg control.SetConfig) (control.Message, error)
-	StartStream(ctx context.Context, deviceID string, purpose string) (map[string]any, error)
+	StartStream(ctx context.Context, deviceID string, purpose string, rec RecordingConfig) (map[string]any, error)
 	StopStream(ctx context.Context, streamID string) error
 	GetStream(streamID string) (*stream.Stream, error)
 	DeviceGet(deviceID string) (*device.Device, error)
 	RTPStreamStats(streamID string) (rtp.Stats, bool)
 	StreamPort(streamID string) (uint16, bool)
+	// Recording methods
+	GetRecording(recordingID string) (map[string]any, error)
+	DownloadRecording(recordingID string) (string, error)
 }
 
 // Handlers holds the server reference and implements each §15 endpoint.
@@ -116,14 +126,24 @@ func (h *Handlers) handleStartStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Purpose string `json:"purpose"`
+		Purpose   string          `json:"purpose"`
+		Recording RecordingConfig `json:"recording,omitempty"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+
+	// Reject FLAC at API layer (clean 400 instead of 500)
+	if req.Recording.Enabled && req.Recording.Format == "flac" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "FLAC format not supported; use WAV"})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), streamTimeout)
 	defer cancel()
 
-	result, err := h.srv.StartStream(ctx, id, req.Purpose)
+	result, err := h.srv.StartStream(ctx, id, req.Purpose, req.Recording)
 	if err != nil {
 		switch {
 		case errors.Is(err, stream.ErrStreamNotFound), errors.Is(err, stream.ErrIllegalTransition):
@@ -291,7 +311,12 @@ func (h *Handlers) handleRecording(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing id"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"recording_id": id})
+	rec, err := h.srv.GetRecording(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "recording not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
 }
 
 func (h *Handlers) handleRecordingDownload(w http.ResponseWriter, r *http.Request) {
@@ -300,7 +325,12 @@ func (h *Handlers) handleRecordingDownload(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing id"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"recording_id": id, "download": "not_implemented"})
+	path, err := h.srv.DownloadRecording(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "recording not found"})
+		return
+	}
+	http.ServeFile(w, r, path)
 }
 
 func (h *Handlers) handleMetrics(w http.ResponseWriter, _ *http.Request) {

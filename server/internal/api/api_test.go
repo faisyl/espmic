@@ -44,7 +44,7 @@ func (f *fakeSrv) PushConfig(_ context.Context, deviceID string, cfg control.Set
 	f.pushCall = true
 	return f.pushMsg, f.pushErr
 }
-func (f *fakeSrv) StartStream(_ context.Context, deviceID, purpose string) (map[string]any, error) {
+func (f *fakeSrv) StartStream(_ context.Context, deviceID, purpose string, rec RecordingConfig) (map[string]any, error) {
 	f.startCall = true
 	return f.startMsg, f.startErr
 }
@@ -68,6 +68,12 @@ func (f *fakeSrv) StreamPort(streamID string) (uint16, bool) {
 }
 func (f *fakeSrv) DeviceGet(deviceID string) (*device.Device, error) {
 	return &device.Device{DeviceID: deviceID, DisplayName: deviceID, Status: "online"}, nil
+}
+func (f *fakeSrv) GetRecording(recordingID string) (map[string]any, error) {
+	return map[string]any{"recording_id": recordingID}, nil
+}
+func (f *fakeSrv) DownloadRecording(recordingID string) (string, error) {
+	return "", nil
 }
 
 // TestHealth verifies the S0 health endpoint (spec §15).

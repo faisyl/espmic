@@ -133,18 +133,15 @@ func TestRecorderWAVOutput(t *testing.T) {
 	}
 }
 
-func TestRecorderFLACMinimal(t *testing.T) {
+func TestRecorderFLACRejected(t *testing.T) {
 	dir := t.TempDir()
-	rec, err := NewRecorder("flac", dir, "flac-test", 48000, 2)
-	if err != nil {
-		t.Fatalf("NewRecorder: %v", err)
+	_, err := NewRecorder("flac", dir, "flac-test", 48000, 2)
+	if err == nil {
+		t.Fatal("expected error for FLAC format")
 	}
-	if err := rec.Begin(t0()); err != nil {
-		t.Fatalf("Begin: %v", err)
-	}
-	_, _, err = rec.Finalize(t0().Add(timeSecond))
-	if err != nil {
-		t.Fatalf("Finalize: %v", err)
+	// Verify error message is clear
+	if err.Error() != "recorder: unsupported format \"flac\" (only WAV is supported; FLAC not implemented)" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
