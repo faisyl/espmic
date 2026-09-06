@@ -251,11 +251,11 @@ func (h *Handlers) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	// Omit SSRC as per spec (device-learned, 0/unknown on stream object)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"stream_id":   st.StreamID,
-		"device_id":   st.DeviceID,
-		"state":       st.State(),
-		"port":        port,
-		"started_at":  st.StartedAt.UTC().Format(time.RFC3339),
+		"stream_id":  st.StreamID,
+		"device_id":  st.DeviceID,
+		"state":      st.State(),
+		"port":       port,
+		"started_at": st.StartedAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -275,13 +275,13 @@ func (h *Handlers) handleStreamStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"stream_id":          id,
-		"packets_received":   stats.Received,
-		"packets_lost":       stats.Lost,
-		"packets_duplicate":  stats.Duplicate,
-		"packets_reordered":  stats.Reordered,
-		"packets_late":       stats.Late,
-		"jitter_ms":          stats.JitterMS,
+		"stream_id":         id,
+		"packets_received":  stats.Received,
+		"packets_lost":      stats.Lost,
+		"packets_duplicate": stats.Duplicate,
+		"packets_reordered": stats.Reordered,
+		"packets_late":      stats.Late,
+		"jitter_ms":         stats.JitterMS,
 	})
 }
 
