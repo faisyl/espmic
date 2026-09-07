@@ -429,35 +429,35 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 		}
 		jb := binding.JitterBuffer()
 
-	// Create and start the audio worker (best-effort decode for live
-	// meters/listen). Liveness is driven by the receiver path below — the
-	// worker MUST NOT affect stream lifecycle, even if it hangs/errors.
-	dec := audio.NewPionDecoder()
-	dec.Reset()
+		// Create and start the audio worker (best-effort decode for live
+		// meters/listen). Liveness is driven by the receiver path below — the
+		// worker MUST NOT affect stream lifecycle, even if it hangs/errors.
+		dec := audio.NewPionDecoder()
+		dec.Reset()
 
-	workerCtx, workerCancel := context.WithCancel(context.Background())
-	s.rtp.SetWorkerCancel(streamID, workerCancel)
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		s.rtp.SetWorkerCancel(streamID, workerCancel)
 
-	worker := audio.NewWorker(streamID, jb, dec, s.bus, s.metrics, func(first bool) {
-		// no-op: liveness is single-sourced from the RTP receiver path
-	})
-	go worker.Start(workerCtx)
+		worker := audio.NewWorker(streamID, jb, dec, s.bus, s.metrics, func(first bool) {
+			// no-op: liveness is single-sourced from the RTP receiver path
+		})
+		go worker.Start(workerCtx)
 
-	// Drive stream liveness from the RTP receive path (per accepted packet,
-	// independent of decode/playout). This fixes the 'RTP disappeared while
-	// RTP flows continuously' bug: a hanging/erroring decoder can no longer
-	// stall the liveness clock.
-	s.rtp.SetOnPacket(func(sid string, first bool) {
-		st, err := s.stream.Get(sid)
-		if err != nil {
-			return
-		}
-		if first {
-			_ = st.FirstPacket(time.Now())
-		} else {
-			st.Packet(time.Now())
-		}
-	})
+		// Drive stream liveness from the RTP receive path (per accepted packet,
+		// independent of decode/playout). This fixes the 'RTP disappeared while
+		// RTP flows continuously' bug: a hanging/erroring decoder can no longer
+		// stall the liveness clock.
+		s.rtp.SetOnPacket(func(sid string, first bool) {
+			st, err := s.stream.Get(sid)
+			if err != nil {
+				return
+			}
+			if first {
+				_ = st.FirstPacket(time.Now())
+			} else {
+				st.Packet(time.Now())
+			}
+		})
 
 		// If recording enabled, create and start recorder (subscribed to PCM bus)
 		if rec.Enabled {
