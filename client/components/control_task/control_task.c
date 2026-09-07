@@ -449,14 +449,26 @@ static void handle_message(const uint8_t *payload, uint32_t len)
                 notify_sm(SM_EV_STREAM_STARTED);
                 send_stream_started(rid, p.stream_id);
             } else if (e == ESP_ERR_INVALID_STATE) {
-                /* Duplicate start_stream while a stream is already active (e.g.
-                 * the server re-issued it after a control reconnect). Reject it
-                 * but leave the running stream AND the state machine untouched:
-                 * emitting STOP_STREAM here would desync the SM to IDLE while
-                 * the opus/i2s/rtp tasks keep running (orphaned pipeline). */
-                ESP_LOGW(TAG, "start_stream ignored: already streaming id=%s",
+                /* start_stream arrived while a stream is already active. This
+                 * happens whenever the server lost its stream but the device
+                 * kept streaming (server restart, RTP-wait timeout, control
+                 * reconnect) — the device has no way to know the old stream is
+                 * dead. RESTART cleanly: tear down the old pipeline and start
+                 * the new one at the new destination. Rejecting here would
+                 * deadlock (the device would refuse every start until reboot).
+                 * The SM is already STREAMING and stays STREAMING. */
+                ESP_LOGW(TAG, "start_stream while streaming; restarting old=%s",
                          audio_manager_stream_id());
-                send_error(rid, "invalid_state", "already streaming");
+                audio_manager_stop_stream();
+                esp_err_t e2 = audio_manager_start_stream(&p);
+                if (e2 == ESP_OK) {
+                    notify_sm(SM_EV_STREAM_STARTED);
+                    send_stream_started(rid, p.stream_id);
+                } else {
+                    /* Restart failed: drop to IDLE so a later start can retry. */
+                    notify_sm(SM_EV_STOP_STREAM);
+                    send_error(rid, "internal", "stream restart failed");
+                }
             } else {
                 /* Fresh start failed validation/alloc: abort back to IDLE
                  * (spec Section 11). */
