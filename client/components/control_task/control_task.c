@@ -448,8 +448,18 @@ static void handle_message(const uint8_t *payload, uint32_t len)
             if (e == ESP_OK) {
                 notify_sm(SM_EV_STREAM_STARTED);
                 send_stream_started(rid, p.stream_id);
+            } else if (e == ESP_ERR_INVALID_STATE) {
+                /* Duplicate start_stream while a stream is already active (e.g.
+                 * the server re-issued it after a control reconnect). Reject it
+                 * but leave the running stream AND the state machine untouched:
+                 * emitting STOP_STREAM here would desync the SM to IDLE while
+                 * the opus/i2s/rtp tasks keep running (orphaned pipeline). */
+                ESP_LOGW(TAG, "start_stream ignored: already streaming id=%s",
+                         audio_manager_stream_id());
+                send_error(rid, "invalid_state", "already streaming");
             } else {
-                /* Validation failed: remain IDLE (spec Section 11). */
+                /* Fresh start failed validation/alloc: abort back to IDLE
+                 * (spec Section 11). */
                 notify_sm(SM_EV_STOP_STREAM);
                 send_error(rid, "invalid_config", "start_stream rejected");
             }
