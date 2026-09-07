@@ -90,7 +90,15 @@ func (r *Receiver) Bind(ctx context.Context, streamID string, pt uint8, jitterTa
 	if jitterTarget <= 0 {
 		jitterTarget = 60 * time.Millisecond
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	// The readLoop must outlive the caller. StartStream is invoked with the
+	// HTTP request context (api.handleStartStream derives it from r.Context()
+	// with a defer cancel()), so deriving the readLoop ctx from the passed-in
+	// ctx makes the receiver goroutine die the instant the POST returns —
+	// leaving the socket bound but unread (rx frozen, stream stuck in
+	// RTP_WAIT -> timeout). The stream's UDP receive lifetime is owned by
+	// CloseStream (b.cancel), NOT the request, so root it at Background.
+	_ = ctx
+	lctx, cancel := context.WithCancel(context.Background())
 	b := &streamBinding{
 		streamID:    streamID,
 		ssrc:        0,
@@ -102,7 +110,7 @@ func (r *Receiver) Bind(ctx context.Context, streamID string, pt uint8, jitterTa
 		cancel:      cancel,
 	}
 	r.streams[streamID] = b
-	go r.readLoop(ctx, b)
+	go r.readLoop(lctx, b)
 	return port, nil
 }
 

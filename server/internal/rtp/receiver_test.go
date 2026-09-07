@@ -86,6 +86,39 @@ func TestReceiverAcceptsValidPacket(t *testing.T) {
 	}
 }
 
+// TestReceiverReadLoopSurvivesCallerCtxCancel is a regression test for the bug
+// where the readLoop was rooted at the caller's context. In production Bind is
+// called from StartStream with the HTTP request context (cancelled via a defer
+// the instant the POST returns), so the receiver goroutine died immediately and
+// the UDP socket stayed bound but unread — every stream stalled in RTP_WAIT.
+// The readLoop must live until CloseStream, independent of the caller ctx.
+func TestReceiverReadLoopSurvivesCallerCtxCancel(t *testing.T) {
+	r := NewReceiver(metrics.New())
+	ctx, cancel := context.WithCancel(context.Background())
+	port, err := r.Bind(ctx, "s1", DefaultPayloadType, 60*time.Millisecond, 0)
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer r.CloseStream("s1")
+
+	// Simulate the HTTP handler returning: the caller's ctx is cancelled.
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+
+	// The device keeps sending; the receiver must still accept packets.
+	addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(port)}
+	for i := 0; i < 5; i++ {
+		sendPacket(t, addr, makeRawRTP(t, 2, DefaultPayloadType, uint16(100+i), 96000, 0x1234, []byte{0x42}))
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	jb, _ := r.JitterBuffer("s1")
+	if got := jb.Statistics().Received; got != 5 {
+		t.Fatalf("received = %d after caller-ctx cancel, want 5 (readLoop must outlive the request ctx)", got)
+	}
+}
+
 func TestReceiverLearnsFirstSSRCAndRejectsForeign(t *testing.T) {
 	// Device chooses its own SSRC (spec §8): the receiver learns it from the
 	// first valid packet, accepts that stream, and rejects any foreign SSRC
