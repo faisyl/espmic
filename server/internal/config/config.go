@@ -67,19 +67,19 @@ type Config struct {
 // Load builds a Config from defaults overridden by environment variables.
 func Load() *Config {
 	return &Config{
-		HTTPAddr:         envStr("ESPMIC_HTTP_ADDR", ":8080"),
-		ControlAddr:      envStr("ESPMIC_CONTROL_ADDR", ":9000"),
-		TLSCertFile:      envStr("ESPMIC_TLS_CERT", ""),
-		TLSKeyFile:       envStr("ESPMIC_TLS_KEY", ""),
-		DeviceCredential: envStr("ESPMIC_DEVICE_CREDENTIAL", ""),
-		LogLevel:         envStr("ESPMIC_LOG_LEVEL", "info"),
-		JitterTargetMS:   envInt("ESPMIC_JITTER_TARGET_MS", 60),
-		RTPWaitTimeoutS:  envInt("ESPMIC_RTP_WAIT_TIMEOUT_S", 5),
-		DBPath:           envStr("ESPMIC_DB_PATH", "espmic.db"),
-		RecordingsDir:    envStr("ESPMIC_RECORDINGS_DIR", "recordings"),
-		RTPBindPort:      envInt("ESPMIC_RTP_BIND_PORT", 0),
-		AdvertiseHost:    envStr("ESPMIC_ADVERTISE_HOST", ""),
-		AdvertiseRTPPort: envInt("ESPMIC_ADVERTISE_RTP_PORT", 0),
+		HTTPAddr:             envStr("ESPMIC_HTTP_ADDR", ":8080"),
+		ControlAddr:          envStr("ESPMIC_CONTROL_ADDR", ":9000"),
+		TLSCertFile:          envStr("ESPMIC_TLS_CERT", ""),
+		TLSKeyFile:           envStr("ESPMIC_TLS_KEY", ""),
+		DeviceCredential:     envStr("ESPMIC_DEVICE_CREDENTIAL", ""),
+		LogLevel:             envStr("ESPMIC_LOG_LEVEL", "info"),
+		JitterTargetMS:       envInt("ESPMIC_JITTER_TARGET_MS", 60),
+		RTPWaitTimeoutS:      envInt("ESPMIC_RTP_WAIT_TIMEOUT_S", 5),
+		DBPath:               envStr("ESPMIC_DB_PATH", "espmic.db"),
+		RecordingsDir:        envStr("ESPMIC_RECORDINGS_DIR", "recordings"),
+		RTPBindPort:          envInt("ESPMIC_RTP_BIND_PORT", 0),
+		AdvertiseHost:        envStr("ESPMIC_ADVERTISE_HOST", ""),
+		AdvertiseRTPPort:     envInt("ESPMIC_ADVERTISE_RTP_PORT", 0),
 		RTPDisappearTimeoutS: envInt("ESPMIC_RTP_DISAPPEAR_TIMEOUT_S", 3),
 	}
 }
