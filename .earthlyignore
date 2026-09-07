@@ -33,3 +33,5 @@ client/test/test_state_machine
 **/*.o
 **/__pycache__/
 **/*.pyc
+
+client/.cache

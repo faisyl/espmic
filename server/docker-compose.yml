@@ -12,6 +12,7 @@ services:
         GIT_COMMIT: "${GIT_COMMIT:-dev}"
         BUILD_DATE: "${BUILD_DATE:-unknown}"
     restart: unless-stopped
+    network_mode: host
     environment:
       # All tunables (source of truth: internal/config/config.go):
       ESPMIC_HTTP_ADDR: ":8080"
@@ -27,9 +28,9 @@ services:
       ESPMIC_JITTER_TARGET_MS: "60"
       ESPMIC_RTP_WAIT_TIMEOUT_S: "5"
       ESPMIC_LOG_LEVEL: "debug"
-    ports:
-      - "8080:8080"   # HTTP management API
-      - "4433:4433"   # control TLS/TCP
+    #ports:
+    #  - "8080:8080"   # HTTP management API
+    #  - "4433:4433"   # control TLS/TCP
     volumes:
       - espmic-data:/data
 
