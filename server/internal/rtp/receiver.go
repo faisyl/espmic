@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -60,14 +61,19 @@ func NewReceiver(m *metrics.Metrics) *Receiver {
 // (spec §9: one UDP port per active stream). pt is uint8 (the RTP payload
 // type field width). Both are validated on every packet (spec §19).
 // jitterTarget sets the target playout delay for the jitter buffer; when zero
-// it defaults to 60ms (spec §11).
-func (r *Receiver) Bind(ctx context.Context, streamID string, pt uint8, jitterTarget time.Duration) (uint16, error) {
+// it defaults to 60ms (spec §11). bindPort is the UDP port to bind; 0 =
+// dynamic (current behavior).
+func (r *Receiver) Bind(ctx context.Context, streamID string, pt uint8, jitterTarget time.Duration, bindPort int) (uint16, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.streams[streamID]; ok {
 		return 0, errors.New("rtp: stream already bound")
 	}
-	pc, err := net.ListenPacket("udp", ":0")
+	addr := ":0"
+	if bindPort > 0 {
+		addr = net.JoinHostPort("", strconv.Itoa(bindPort))
+	}
+	pc, err := net.ListenPacket("udp", addr)
 	if err != nil {
 		return 0, err
 	}

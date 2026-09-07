@@ -338,7 +338,7 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 	requestID := newRequestID()
 
 	// Bind RTP port
-	port, err := s.rtp.Bind(ctx, streamID, rtp.DefaultPayloadType, time.Duration(s.cfg.JitterTargetMS)*time.Millisecond)
+	port, err := s.rtp.Bind(ctx, streamID, rtp.DefaultPayloadType, time.Duration(s.cfg.JitterTargetMS)*time.Millisecond, s.cfg.RTPBindPort)
 	if err != nil {
 		return nil, fmt.Errorf("bind RTP: %w", err)
 	}
@@ -360,8 +360,11 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 	// Determine the server IP the device connected to (from the control
 	// session's LocalAddr). Falls back to cfg.ControlAddr host, then
 	// 127.0.0.1 when both are unavailable/unspecified.
+	// AdvertiseHost overrides this when set (e.g. Docker/NAT).
 	serverIP := "127.0.0.1"
-	if ip, ok := s.ctrl.LocalIP(deviceID); ok {
+	if s.cfg.AdvertiseHost != "" {
+		serverIP = s.cfg.AdvertiseHost
+	} else if ip, ok := s.ctrl.LocalIP(deviceID); ok {
 		serverIP = ip
 	} else if s.cfg.ControlAddr != "" {
 		host, _, err := net.SplitHostPort(s.cfg.ControlAddr)
@@ -370,8 +373,14 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 		}
 	}
 
+	// AdvertiseRTPPort overrides when >0, else the bound port.
+	destPort := port
+	if s.cfg.AdvertiseRTPPort > 0 {
+		destPort = uint16(s.cfg.AdvertiseRTPPort)
+	}
+
 	// Send start_stream to device with full spec §11 schema
-	dest := control.Destination{IP: serverIP, Port: port}
+	dest := control.Destination{IP: serverIP, Port: destPort}
 	codec := control.Codec{
 		Name:       "opus",
 		SampleRate: 48000,

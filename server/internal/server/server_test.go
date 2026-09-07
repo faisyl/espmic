@@ -211,7 +211,7 @@ func TestAudioPipelineEndToEnd(t *testing.T) {
 	// Bind RTP directly (bypass control handshake per god refinement #2)
 	streamID := "test-stream"
 	ssrc := uint32(0x12345678)
-	_, err = srv.rtp.Bind(ctx, streamID, 111, 60*time.Millisecond)
+	_, err = srv.rtp.Bind(ctx, streamID, 111, 60*time.Millisecond, 0)
 	if err != nil {
 		t.Fatalf("bind RTP: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestStopStreamConsumesAndPersistsStats(t *testing.T) {
 	srv.stream.Add(st)
 
 	// Bind RTP dummy port
-	_, _ = srv.rtp.Bind(context.Background(), streamID, 111, 60*time.Millisecond)
+	_, _ = srv.rtp.Bind(context.Background(), streamID, 111, 60*time.Millisecond, 0)
 
 	// Device routine to handle stop_stream and reply with StreamStopped carrying stats
 	stopHandled := make(chan struct{})
@@ -803,6 +803,105 @@ func TestStartStreamDestinationIPFromSessionLocalAddr(t *testing.T) {
 	}
 
 	// Verify StartStream succeeded
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			t.Fatalf("StartStream: %v", r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("StartStream did not complete")
+	}
+}
+
+// TestStartStreamDestinationOverride verifies AdvertiseHost + AdvertiseRTPPort
+// override the emitted start_stream Destination.IP/Port.
+func TestStartStreamDestinationOverride(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	cfg := config.Load()
+	cfg.DBPath = dbPath
+	cfg.AdvertiseHost = "10.0.0.1"
+	cfg.AdvertiseRTPPort = 20000
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	ctx := context.Background()
+
+	if err := srv.Authenticate(ctx, "test-device", ""); err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	mockConn := &mockTCPConn{
+		Conn: serverConn,
+		localAddr: &net.TCPAddr{
+			IP:   net.ParseIP("192.168.1.50"),
+			Port: 12345,
+		},
+	}
+
+	session := control.NewSession(mockConn, nil, time.Now, nil)
+	session.SetOnReady(srv.ctrl.OnReady)
+	session.SetOnClose(func(s *control.Session) { srv.ctrl.Unregister(s.DeviceID()) })
+	session.SetOnMsg(srv.ctrl.Handler())
+	sessCtx, sessCancel := context.WithCancel(ctx)
+	defer sessCancel()
+	go session.Run(sessCtx)
+
+	hello := control.NewHello("test-device", "", "1.0.0", nil)
+	payload, err := control.Encode(hello)
+	if err != nil {
+		t.Fatalf("Encode hello: %v", err)
+	}
+	if err := control.WriteFrame(clientConn, payload); err != nil {
+		t.Fatalf("WriteFrame hello: %v", err)
+	}
+	_, err = control.ReadFrame(clientConn)
+	if err != nil {
+		t.Fatalf("ReadFrame hello_ack: %v", err)
+	}
+
+	type result struct {
+		res map[string]any
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		res, err := srv.StartStream(ctx, "test-device", "test", api.RecordingConfig{})
+		ch <- result{res, err}
+	}()
+
+	frame, err := control.ReadFrame(clientConn)
+	if err != nil {
+		t.Fatalf("ReadFrame start_stream: %v", err)
+	}
+	msg, err := control.DecodePayload(frame)
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	startReq, ok := msg.(*control.StartStream)
+	if !ok {
+		t.Fatalf("type = %T, want *control.StartStream", msg)
+	}
+	if startReq.Destination.IP != "10.0.0.1" {
+		t.Fatalf("Destination.IP = %q, want 10.0.0.1 (from AdvertiseHost)", startReq.Destination.IP)
+	}
+	if startReq.Destination.Port != 20000 {
+		t.Fatalf("Destination.Port = %d, want 20000 (from AdvertiseRTPPort)", startReq.Destination.Port)
+	}
+
+	reply := control.NewStreamStarted(startReq.RequestID, startReq.StreamID)
+	replyPayload, err := control.Encode(reply)
+	if err != nil {
+		t.Fatalf("Encode reply: %v", err)
+	}
+	if err := control.WriteFrame(clientConn, replyPayload); err != nil {
+		t.Fatalf("WriteFrame reply: %v", err)
+	}
+
 	select {
 	case r := <-ch:
 		if r.err != nil {

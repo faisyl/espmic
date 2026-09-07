@@ -4,7 +4,10 @@
 // can be overridden by env vars of the form ESPMIC_<UPPER_SNAKE>.
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+)
 
 // Config is the set of runtime tunables for the server (spec §4).
 type Config struct {
@@ -39,6 +42,21 @@ type Config struct {
 
 	// RecordingsDir is the directory where recording files are stored.
 	RecordingsDir string
+
+	// RTPBindPort is the UDP port the RTP receiver binds to. 0 = dynamic
+	// (current behavior; default). Set via ESPMIC_RTP_BIND_PORT.
+	RTPBindPort int
+
+	// AdvertiseHost overrides the RTP destination host advertised to the
+	// device. Empty = derive from the control connection (current behavior;
+	// default). Set via ESPMIC_ADVERTISE_HOST. Use this when the server is
+	// behind Docker/NAT so the device gets a reachable host.
+	AdvertiseHost string
+
+	// AdvertiseRTPPort overrides the RTP destination port advertised to the
+	// device. 0 = advertise the actually-bound port (current behavior;
+	// default). Set via ESPMIC_ADVERTISE_RTP_PORT.
+	AdvertiseRTPPort int
 }
 
 // Load builds a Config from defaults overridden by environment variables.
@@ -54,6 +72,9 @@ func Load() *Config {
 		RTPWaitTimeoutS:  envInt("ESPMIC_RTP_WAIT_TIMEOUT_S", 5),
 		DBPath:           envStr("ESPMIC_DB_PATH", "espmic.db"),
 		RecordingsDir:    envStr("ESPMIC_RECORDINGS_DIR", "recordings"),
+		RTPBindPort:      envInt("ESPMIC_RTP_BIND_PORT", 0),
+		AdvertiseHost:    envStr("ESPMIC_ADVERTISE_HOST", ""),
+		AdvertiseRTPPort: envInt("ESPMIC_ADVERTISE_RTP_PORT", 0),
 	}
 }
 
@@ -65,6 +86,11 @@ func envStr(key, def string) string {
 }
 
 func envInt(key string, def int) int {
-	// Kept simple for S0; a real parser lands with full logic in S1.
+	// strconv.Atoi; fall back to default on empty/error.
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
+	}
 	return def
 }
