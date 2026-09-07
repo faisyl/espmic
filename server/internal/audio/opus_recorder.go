@@ -57,10 +57,10 @@ func NewOpusRecorder(dir, base string, rate, channels int, preskip uint16) (*Opu
 // writePage appends an Ogg page with the given granulepos and data.
 func (r *OpusRecorder) writePage(granulepos int64, data []byte) {
 	const headLen = 27
-	nseg := len(data) / 255
-	if len(data)%255 != 0 || nseg == 0 {
-		nseg++
-	}
+	// Ogg lacing: floor(len/255)+1 segments. The +1 always emits the
+	// terminating segment (a 0 lacing value when len is an exact multiple of
+	// 255) so a packet is never mis-framed as "continued" (RFC 3533 §6).
+	nseg := len(data)/255 + 1
 	hdr := [headLen]byte{}
 	copy(hdr[0:4], "OggS")
 	hdr[4] = 0 // version
@@ -114,10 +114,10 @@ func (r *OpusRecorder) writeOpusHead() {
 
 func (r *OpusRecorder) buildBOSPage(granulepos int64, data []byte) []byte {
 	const headLen = 27
-	nseg := len(data) / 255
-	if len(data)%255 != 0 || nseg == 0 {
-		nseg++
-	}
+	// Ogg lacing: floor(len/255)+1 segments. The +1 always emits the
+	// terminating segment (a 0 lacing value when len is an exact multiple of
+	// 255) so a packet is never mis-framed as "continued" (RFC 3533 §6).
+	nseg := len(data)/255 + 1
 	hdr := [headLen]byte{}
 	copy(hdr[0:4], "OggS")
 	hdr[4] = 0

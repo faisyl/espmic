@@ -208,6 +208,56 @@ func TestOpusRecorderWritesValidOgg(t *testing.T) {
 	}
 }
 
+// TestOpusRecorderOggFramingWalksCleanly walks every Ogg page and asserts the
+// segment tables consume the file byte-exactly. This catches lacing bugs —
+// notably a payload whose length is an exact multiple of 255, which needs a
+// terminating 0 lacing value or the page is mis-framed as "continued".
+func TestOpusRecorderOggFramingWalksCleanly(t *testing.T) {
+	dir := t.TempDir()
+	rec, err := NewOpusRecorder(dir, "framing", 48000, 2, 312)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Include exact multiples of 255 (255, 510) alongside ordinary sizes.
+	sizes := []int{100, 255, 320, 510, 255, 200}
+	for i, s := range sizes {
+		rec.WritePacket(uint32(i*960), make([]byte, s))
+	}
+	uri, _, err := rec.Finalize(t0().Add(timeSecond))
+	if err != nil {
+		t.Fatalf("Finalize: %v", err)
+	}
+	data, err := os.ReadFile(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	off, pages := 0, 0
+	for off < len(data) {
+		if off+27 > len(data) || string(data[off:off+4]) != "OggS" {
+			t.Fatalf("page %d: bad/absent OggS sync at offset %d", pages, off)
+		}
+		nseg := int(data[off+26])
+		if off+27+nseg > len(data) {
+			t.Fatalf("page %d: truncated segment table", pages)
+		}
+		dataLen := 0
+		for i := 0; i < nseg; i++ {
+			dataLen += int(data[off+27+i])
+		}
+		// Each page here holds exactly one complete packet, so the final
+		// lacing value must be <255 (a trailing 255 means "packet continues"
+		// — the exact-multiple-of-255 bug). nseg==0 is the empty EOS page.
+		if nseg > 0 && data[off+27+nseg-1] == 255 {
+			t.Fatalf("page %d: final lacing value is 255 (packet mis-framed as continued — missing terminating segment)", pages)
+		}
+		off += 27 + nseg + dataLen
+		pages++
+	}
+	if off != len(data) {
+		t.Fatalf("page walk did not consume file exactly: off=%d len=%d (lacing bug)", off, len(data))
+	}
+}
+
 func containsOpusHead(data []byte) bool {
 	for i := 0; i <= len(data)-8; i++ {
 		if string(data[i:i+8]) == "OpusHead" {
