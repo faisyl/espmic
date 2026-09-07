@@ -18,11 +18,7 @@
 
 static const char *TAG = "audio_mgr";
 
-/* Buffer geometry (spec Section 6 recommended sizes). */
-#define PCM_RING_MS        200
-#define PCM_RING_SAMPLES   ((I2S_CAP_SAMPLE_RATE * PCM_RING_MS / 1000) * I2S_CAP_CHANNELS)
-#define ENC_QUEUE_SLOTS    64
-#define ENC_QUEUE_SLOT_SZ  1500
+/* Buffer geometry is chosen at runtime (PSRAM-aware); see pick_geometry(). */
 
 typedef struct {
     bool                    inited;
@@ -84,6 +80,11 @@ static void pick_geometry(void)
 
 /* Prefer PSRAM (spec Section 2) but fall back to internal RAM. */
 static void *aud_alloc(size_t n)
+{
+    void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!p) p = heap_caps_malloc(n, MALLOC_CAP_8BIT);
+    return p;
+}
 
 esp_err_t audio_manager_init(const audio_manager_config_t *cfg)
 {
@@ -97,8 +98,8 @@ esp_err_t audio_manager_init(const audio_manager_config_t *cfg)
              g.cfg.i2s_bclk_gpio, g.cfg.i2s_ws_gpio, g.cfg.i2s_din_gpio,
              (unsigned)g.cfg.default_bitrate);
     pick_geometry();
-    ESP_LOGI(TAG, "PSRAM: initialized=%d total=%zu",
-             esp_psram_is_initialized(),
+    ESP_LOGI(TAG, "PSRAM: detected=%d total=%zu",
+             has_psram,
              (size_t)heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
     ESP_LOGI(TAG, "buffer geometry: profile=%s ring_ms=%zu slots=%zu slot_sz=%zu ring=%zu arena=%zu lens=%zu total=%zu",
              has_psram ? "psram" : "internal",
@@ -149,8 +150,8 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
 
     /* Allocate ring + queue storage. */
     g.ring_storage = aud_alloc(PCM_RING_SAMPLES * sizeof(int32_t));
-    g.eq_arena     = aud_alloc(ENC_QUEUE_SLOTS * ENC_QUEUE_SLOT_SZ);
-    g.eq_lengths   = aud_alloc(ENC_QUEUE_SLOTS * sizeof(size_t));
+    g.eq_arena     = aud_alloc(enc_queue_slots * enc_queue_slot_sz);
+    g.eq_lengths   = aud_alloc(enc_queue_slots * sizeof(size_t));
     g.ring_lock    = xSemaphoreCreateMutex();
     g.queue_lock   = xSemaphoreCreateMutex();
     if (!g.ring_storage || !g.eq_arena || !g.eq_lengths ||
@@ -170,7 +171,7 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
     }
 
     pcm_ring_init(&g.ring, g.ring_storage, PCM_RING_SAMPLES);
-    eq_init(&g.queue, g.eq_arena, g.eq_lengths, ENC_QUEUE_SLOTS, ENC_QUEUE_SLOT_SZ);
+    eq_init(&g.queue, g.eq_arena, g.eq_lengths, enc_queue_slots, enc_queue_slot_sz);
     g.capture_late = 0;
     g.encoder_late = 0;
     g.stream_seq++;
