@@ -44,6 +44,7 @@ const (
 	FailureDeviceDisc     FailureReason = "ACTIVE->DEVICE_DISCONNECTED"
 	FailureDecodeError    FailureReason = "ACTIVE->DECODE_ERROR"
 	FailureServerRestart  FailureReason = "FAILED->SERVER_RESTART"
+	FailureReplaced       FailureReason = "COMPLETE->REPLACED"
 )
 
 // Stream holds the authoritative lifecycle state for one stream (spec §6, §17).
@@ -253,7 +254,19 @@ func (s *Stream) Stopped() error {
 	return nil
 }
 
-// DeviceDisconnected transitions ACTIVE -> DEVICE_DISCONNECTED (spec §17).
+// ForceComplete transitions any non-terminal state to COMPLETE. Used when
+// replacing an existing stream for a device (one-active-stream-per-device).
+func (s *Stream) ForceComplete() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch s.state {
+	case StateComplete, StateFailed:
+		return nil // already terminal
+	}
+	s.state = StateComplete
+	s.Reason = FailureReplaced
+	return nil
+}
 func (s *Stream) DeviceDisconnected() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -347,7 +360,22 @@ func (r *Registry) Remove(id string) {
 	delete(r.streams, id)
 }
 
-// ForEach invokes fn for every stream under a read lock (spec §20 cleanup).
+// GetByDevice returns the first non-terminal stream for the given device ID.
+// Non-terminal states: CREATED, STARTING, RTP_WAIT, ACTIVE, STOPPING.
+// Terminal states: COMPLETE, FAILED.
+func (r *Registry) GetByDevice(deviceID string) (*Stream, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, s := range r.streams {
+		if s.DeviceID == deviceID {
+			switch s.State() {
+			case StateActive, StateRTPWait, StateStarting, StateCreated, StateStopping:
+				return s, true
+			}
+		}
+	}
+	return nil, false
+}
 func (r *Registry) ForEach(fn func(*Stream)) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

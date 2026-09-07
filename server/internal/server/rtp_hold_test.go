@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -10,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"espmic/server/internal/api"
 	"espmic/server/internal/audio"
 	"espmic/server/internal/config"
+	"espmic/server/internal/control"
 	"espmic/server/internal/rtp"
 	"espmic/server/internal/stream"
 )
@@ -186,6 +189,152 @@ func TestRTPHoldStreamStaysActiveWithRealUDP(t *testing.T) {
 	// Stop the stream
 	srv.rtp.CloseStream(streamID)
 	srv.stream.Remove(streamID)
+}
+
+// TestStartStreamReplacesExistingStream verifies that starting a new stream
+// for a device that already has an active stream tears down the old one.
+func TestStartStreamReplacesExistingStream(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	cfg := config.Load()
+	cfg.DBPath = dbPath
+	cfg.RecordingsDir = filepath.Join(dir, "recordings")
+
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	ctx := context.Background()
+
+	// Register device
+	if err := srv.Authenticate(ctx, "test-device", ""); err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+
+	// Manually create a stream for the device (simulating an existing active stream)
+	streamID1 := "existing-stream"
+	ssrc := uint32(0xDEADBEEF)
+	st1 := stream.New(streamID1, "test-device", ssrc, time.Now())
+	st1.WithTimeoutConfig(stream.TimeoutConfig{
+		RTPWait:      5 * time.Second,
+		RTPDisappear: 1 * time.Second,
+	})
+	srv.stream.Add(st1)
+	_ = st1.Start(time.Now())
+	_ = st1.DeviceCommandSent()
+	_ = st1.StreamStarted(time.Now())
+	_ = st1.FirstPacket(time.Now()) // transition to ACTIVE
+
+	if st1.State() != stream.StateActive {
+		t.Fatalf("expected ACTIVE, got %s", st1.State())
+	}
+
+	// Verify GetByDevice returns the existing stream
+	existing, ok := srv.stream.GetByDevice("test-device")
+	if !ok {
+		t.Fatal("GetByDevice should return existing stream")
+	}
+	if existing.StreamID != streamID1 {
+		t.Fatalf("GetByDevice returned wrong stream: %s", existing.StreamID)
+	}
+
+	// Now call StartStream for the same device — should replace the old stream
+	// We need a control session for SendStartStream to work. Use a minimal approach.
+	// Create a pipe and a goroutine that replies stream_started.
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	mockConn := &mockTCPConn{
+		Conn: serverConn,
+		localAddr: &net.TCPAddr{
+			IP:   net.ParseIP("192.168.1.50"),
+			Port: 12345,
+		},
+	}
+	session := control.NewSession(mockConn, nil, time.Now, nil)
+	session.SetOnReady(srv.ctrl.OnReady)
+	session.SetOnClose(func(s *control.Session) { srv.ctrl.Unregister(s.DeviceID()) })
+	session.SetOnMsg(srv.ctrl.Handler())
+	sessCtx, sessCancel := context.WithCancel(ctx)
+	defer sessCancel()
+	go session.Run(sessCtx)
+
+	// Complete hello handshake
+	hello := control.NewHello("test-device", "", "1.0.0", nil)
+	payload, _ := control.Encode(hello)
+	_ = control.WriteFrame(clientConn, payload)
+	_, _ = control.ReadFrame(clientConn) // hello_ack
+
+	// Goroutine: read start_stream and reply streamStarted
+	go func() {
+		for {
+			frame, err := control.ReadFrame(clientConn)
+			if err != nil {
+				return
+			}
+			msg, err := control.DecodePayload(frame)
+			if err != nil {
+				return
+			}
+			if p, ok := msg.(*control.Ping); ok {
+				replyPayload, _ := control.Encode(control.NewPong(p.Seq))
+				_ = control.WriteFrame(clientConn, replyPayload)
+				continue
+			}
+			if _, ok := msg.(*control.StartStream); ok {
+				// Read the full start_stream to get requestID and streamID
+				// We need to parse it properly
+				var startMsg struct {
+					RequestID string `json:"request_id"`
+					StreamID  string `json:"stream_id"`
+				}
+				_ = json.Unmarshal(frame, &startMsg)
+				reply := control.NewStreamStarted(startMsg.RequestID, startMsg.StreamID)
+				replyPayload, _ := control.Encode(reply)
+				_ = control.WriteFrame(clientConn, replyPayload)
+				return
+			}
+		}
+	}()
+
+	// Start a new stream for the same device
+	result, err := srv.StartStream(ctx, "test-device", "test", api.RecordingConfig{})
+	if err != nil {
+		t.Fatalf("StartStream: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	// Verify first stream is now COMPLETE (replaced)
+	if st1.State() != stream.StateComplete {
+		t.Fatalf("first stream state = %s, want COMPLETE (replaced)", st1.State())
+	}
+	if st1.Reason != stream.FailureReplaced {
+		t.Fatalf("first stream reason = %s, want REPLACED", st1.Reason)
+	}
+
+	// Verify first stream is no longer in registry
+	if _, err := srv.stream.Get(streamID1); err == nil {
+		t.Fatal("first stream should be removed from registry after replacement")
+	}
+
+	// Verify GetByDevice returns the new stream
+	newStreamID := result["stream_id"].(string)
+	if newStreamID == streamID1 {
+		t.Fatal("new stream should have different ID")
+	}
+	if existing, ok := srv.stream.GetByDevice("test-device"); ok {
+		if existing.StreamID != newStreamID {
+			t.Fatalf("GetByDevice returned wrong stream: %s", existing.StreamID)
+		}
+	} else {
+		t.Fatal("GetByDevice should return new stream")
+	}
 }
 
 func makeRawRTP(version, pt byte, seq uint16, ts, ssrc uint32, payload []byte) []byte {

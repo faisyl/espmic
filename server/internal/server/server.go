@@ -337,6 +337,34 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 		return nil, fmt.Errorf("device not found: %w", err)
 	}
 
+	// Replace any existing non-terminal stream for this device. This handles
+	// the case where a device already has an active stream and a new start_stream
+	// comes in (e.g. dashboard Start clicked again). The existing stream is
+	// torn down (RTP port freed, marked COMPLETE) so the new Bind can succeed.
+	// The firmware also restarts on start_stream while streaming, so this
+	// ensures clean one-active-stream-per-device semantics.
+	if existing, ok := s.stream.GetByDevice(deviceID); ok {
+		streamID := existing.StreamID
+		slog.Debug("stream: replacing existing stream for device", "device_id", deviceID, "stream_id", streamID)
+		// Force the existing stream to COMPLETE (frees RTP port, marks replaced)
+		_ = existing.ForceComplete()
+		// Close RTP to free the port
+		s.rtp.CloseStream(streamID)
+		// Finalize recorders
+		s.finalizeRecorder(streamID)
+		s.finalizeOpusRecorder(streamID)
+		// Remove from registry
+		s.stream.Remove(streamID)
+		// Clean up metrics
+		s.metricsMu.Lock()
+		delete(s.lastStats, streamID)
+		delete(s.lastBitrate, streamID)
+		delete(s.lastBitrateT, streamID)
+		s.metricsMu.Unlock()
+		// Persist final state
+		_ = s.repos.Streams.Save(streamID, deviceID, string(stream.StateComplete), string(stream.FailureReplaced), 0, time.Now())
+	}
+
 	// Generate stream ID (SSRC is device-chosen, learned by the RTP receiver per spec §8)
 	streamID := newStreamID()
 	requestID := newRequestID()
