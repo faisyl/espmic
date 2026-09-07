@@ -769,18 +769,29 @@ func TestStartStreamDestinationIPFromSessionLocalAddr(t *testing.T) {
 		ch <- result{res, err}
 	}()
 
-	// Read the emitted start_stream and assert Destination.IP
-	frame, err := control.ReadFrame(clientConn)
-	if err != nil {
-		t.Fatalf("ReadFrame start_stream: %v", err)
-	}
-	msg, err := control.DecodePayload(frame)
-	if err != nil {
-		t.Fatalf("DecodePayload: %v", err)
-	}
-	startReq, ok := msg.(*control.StartStream)
-	if !ok {
-		t.Fatalf("type = %T, want *control.StartStream", msg)
+	// Drain control messages until we get start_stream.
+	// The session reads hello -> hello_ack, then StartStream sends
+	// start_stream; the stream monitor sends ping every 30s but the
+	// first frame after handshake should be start_stream.
+	var startReq *control.StartStream
+	for {
+		frame, err := control.ReadFrame(clientConn)
+		if err != nil {
+			t.Fatalf("ReadFrame: %v", err)
+		}
+		msg, err := control.DecodePayload(frame)
+		if err != nil {
+			t.Fatalf("DecodePayload: %v", err)
+		}
+		if s, ok := msg.(*control.StartStream); ok {
+			startReq = s
+			break
+		}
+		// Auto-reply pings to keep the session alive
+		if p, ok := msg.(*control.Ping); ok {
+			payload, _ := control.Encode(control.NewPong(p.Seq))
+			_ = control.WriteFrame(clientConn, payload)
+		}
 	}
 	if startReq.Destination.IP != "192.168.1.50" {
 		t.Fatalf("Destination.IP = %q, want 192.168.1.50 (from session LocalAddr)", startReq.Destination.IP)

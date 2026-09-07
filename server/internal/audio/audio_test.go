@@ -168,6 +168,65 @@ func TestRecorderIdempotentFinalize(t *testing.T) {
 	}
 }
 
+func TestOpusRecorderWritesValidOgg(t *testing.T) {
+	dir := t.TempDir()
+	rec, err := NewOpusRecorder(dir, "stream1", 48000, 2, 312)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a few RTP Opus packets with sequential timestamps
+	for i := 0; i < 5; i++ {
+		rec.WritePacket(uint32(i*960), []byte{0x42, 0x42})
+	}
+	uri, bytes, err := rec.Finalize(t0().Add(timeSecond))
+	if err != nil {
+		t.Fatalf("Finalize: %v", err)
+	}
+	if uri == "" {
+		t.Fatal("expected non-empty URI")
+	}
+	if bytes == 0 {
+		t.Fatal("expected non-zero byte count")
+	}
+	data, err := os.ReadFile(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Print hex for debugging
+	t.Logf("file size=%d hex=%x", len(data), data[:min(80, len(data))])
+	// Verify OggS sync pattern at start of file
+	if len(data) < 4 || string(data[0:4]) != "OggS" {
+		t.Fatal("missing OggS sync pattern — not a valid Ogg file")
+	}
+	// Verify OpusHead capture pattern exists anywhere in the file
+	if !containsOpusHead(data) {
+		t.Fatalf("missing OpusHead capture pattern — invalid Ogg/Opus file (size=%d hex=%x)", len(data), data[:min(80, len(data))])
+	}
+	// Verify OpusTags capture pattern exists
+	if !containsOpusTags(data) {
+		t.Fatal("missing OpusTags capture pattern — invalid Ogg/Opus file")
+	}
+}
+
+func containsOpusHead(data []byte) bool {
+	for i := 0; i <= len(data)-8; i++ {
+		if string(data[i:i+8]) == "OpusHead" {
+			return true
+		}
+	}
+	return false
+}
+
+func containsOpusTags(data []byte) bool {
+	// Scan for "OpusTags" capture pattern anywhere in the file
+	for i := 0; i <= len(data)-8; i++ {
+		if string(data[i:i+8]) == "OpusTags" {
+			return true
+		}
+	}
+	return false
+}
+
 func t0() time.Time { return time.Unix(1_000_000, 0).UTC() }
 
 const timeSecond = 1000000000

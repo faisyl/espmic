@@ -51,7 +51,7 @@ type Server struct {
 	controlAddr    string
 	controlLnReady chan struct{}
 	streamsMu      sync.RWMutex
-	recordings     map[string]*audio.Recorder // streamID -> Recorder
+	recordings     map[string]recorder // streamID -> Recorder (WAV or Opus)
 	recordingsMu   sync.Mutex
 	recRepo        *persistence.RecordingRepo
 
@@ -92,7 +92,7 @@ func New(cfg *config.Config) (*Server, error) {
 		rtp:             rtp.NewReceiver(m),
 		bus:             audio.NewPCMBus(),
 		ctrl:            control.NewSessionManager(),
-		recordings:      make(map[string]*audio.Recorder),
+		recordings:      make(map[string]recorder),
 		controlLnReady:  make(chan struct{}),
 		lastStats:       make(map[string]rtp.Stats),
 		lastBitrate:     make(map[string]int64),
@@ -481,6 +481,21 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 					_ = s.recRepo.Create(recID, streamID, 48000, 2, "opus", time.Now())
 				}
 			}
+
+			// Record Opus to disk (socket->disk, no decode). This runs off
+			// the RTP receive path via onCompressed — independent of the
+			// PCM worker/decoder. Always created when recording is enabled.
+			opusRec, err := audio.NewOpusRecorder(s.cfg.RecordingsDir, streamID, 48000, 2, 312)
+			if err != nil {
+				slog.Error("opus recorder: failed to create", "stream_id", streamID, "err", err)
+			} else {
+				s.rtp.SetOnCompressed(func(sid string, ts uint32, payload []byte) {
+					opusRec.WritePacket(ts, payload)
+				})
+				s.recordingsMu.Lock()
+				s.recordings[streamID+"-opus"] = opusRec
+				s.recordingsMu.Unlock()
+			}
 		}
 
 		return map[string]any{
@@ -566,7 +581,14 @@ func (s *Server) StopStream(ctx context.Context, streamID string) error {
 	}
 }
 
-// finalizeRecorder finalizes and removes the recorder for a stream (idempotent).
+// recorder is the interface shared by WAV and Opus recorders for finalization.
+type recorder interface {
+	Finalize(end time.Time) (uri string, bytes int64, err error)
+}
+
+var _ recorder = (*audio.Recorder)(nil)
+var _ recorder = (*audio.OpusRecorder)(nil)
+
 func (s *Server) finalizeRecorder(streamID string) {
 	s.recordingsMu.Lock()
 	rec, ok := s.recordings[streamID]
@@ -577,13 +599,34 @@ func (s *Server) finalizeRecorder(streamID string) {
 	delete(s.recordings, streamID)
 	s.recordingsMu.Unlock()
 
-	s.bus.Unsubscribe(rec)
+	if l, ok := rec.(audio.PCMListener); ok {
+		s.bus.Unsubscribe(l)
+	}
 	uri, bytes, err := rec.Finalize(time.Now())
 	if err != nil {
 		slog.Error("recorder: finalize failed", "stream_id", streamID, "err", err)
 		return
 	}
 	recID := streamID + "-rec"
+	_ = s.recRepo.Finalize(recID, time.Now(), bytes, uri)
+}
+
+// finalizeOpusRecorder finalizes and removes the Opus recorder for a stream.
+func (s *Server) finalizeOpusRecorder(streamID string) {
+	s.recordingsMu.Lock()
+	rec, ok := s.recordings[streamID+"-opus"]
+	delete(s.recordings, streamID+"-opus")
+	s.recordingsMu.Unlock()
+
+	if !ok {
+		return
+	}
+	uri, bytes, err := rec.Finalize(time.Now())
+	if err != nil {
+		slog.Error("opus recorder: finalize failed", "stream_id", streamID, "err", err)
+		return
+	}
+	recID := streamID + "-opus-rec"
 	_ = s.recRepo.Finalize(recID, time.Now(), bytes, uri)
 }
 
@@ -805,6 +848,7 @@ func (s *Server) cleanupStreamByID(streamID string) {
 	s.rtp.CloseStream(streamID)
 	s.stream.Remove(streamID)
 	s.finalizeRecorder(streamID)
+	s.finalizeOpusRecorder(streamID)
 
 	// Clean up metrics tracking for this stream (prevents leak/stale deltas)
 	s.metricsMu.Lock()

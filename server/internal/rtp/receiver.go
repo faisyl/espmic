@@ -25,7 +25,8 @@ type Receiver struct {
 	metrics *metrics.Metrics
 	now     func() time.Time
 
-	onPacket func(streamID string, first bool) // per-accepted-packet liveness callback
+	onPacket     func(streamID string, first bool)                // per-accepted-packet liveness callback
+	onCompressed func(streamID string, ts uint32, payload []byte) // per-accepted-packet compressed Opus payload
 }
 
 type streamBinding struct {
@@ -165,6 +166,16 @@ func (r *Receiver) SetOnPacket(cb func(streamID string, first bool)) {
 	r.onPacket = cb
 }
 
+// SetOnCompressed sets the per-accepted-packet compressed payload callback.
+// The callback fires for every SSRC/PT-validated packet with the RTP timestamp
+// and Opus payload. This feeds the Opus-to-disk recorder without any
+// decode/playout dependency.
+func (r *Receiver) SetOnCompressed(cb func(streamID string, ts uint32, payload []byte)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onCompressed = cb
+}
+
 // CloseStream tears down the UDP socket and goroutine for streamID.
 func (r *Receiver) CloseStream(streamID string) {
 	r.mu.Lock()
@@ -226,8 +237,12 @@ func (r *Receiver) readLoop(ctx context.Context, b *streamBinding) {
 		}
 		expectedSSRC := b.ssrc
 		cb := r.onPacket
-		first := !b.firstSeen
-		b.firstSeen = true
+		compCb := r.onCompressed
+		var first bool
+		if cb != nil {
+			first = !b.firstSeen
+			b.firstSeen = true
+		}
 		r.mu.Unlock()
 
 		if p.SSRC != expectedSSRC {
@@ -244,6 +259,10 @@ func (r *Receiver) readLoop(ctx context.Context, b *streamBinding) {
 		// This decouples liveness from the audio worker/decoder.
 		if cb != nil {
 			cb(b.streamID, first)
+		}
+		// Fire compressed payload callback (feeds Opus-to-disk recorder).
+		if compCb != nil {
+			compCb(b.streamID, p.Timestamp, p.Payload)
 		}
 	}
 }

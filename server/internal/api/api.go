@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"espmic/server/internal/audio"
@@ -384,6 +385,9 @@ func (h *Handlers) handleRecordingDownload(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "recording not found"})
 		return
+	}
+	if strings.HasSuffix(path, ".opus") {
+		w.Header().Set("Content-Type", "audio/ogg")
 	}
 	http.ServeFile(w, r, path)
 }
