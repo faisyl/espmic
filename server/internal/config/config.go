@@ -57,6 +57,11 @@ type Config struct {
 	// device. 0 = advertise the actually-bound port (current behavior;
 	// default). Set via ESPMIC_ADVERTISE_RTP_PORT.
 	AdvertiseRTPPort int
+
+	// RTPDisappearTimeoutS is the ACTIVE silence window before the server
+	// fails the stream as RTP_TIMEOUT (spec §17). Default 3s (was hardcoded
+	// 1s, too aggressive for real WiFi). Set via ESPMIC_RTP_DISAPPEAR_TIMEOUT_S.
+	RTPDisappearTimeoutS int
 }
 
 // Load builds a Config from defaults overridden by environment variables.
@@ -75,6 +80,7 @@ func Load() *Config {
 		RTPBindPort:      envInt("ESPMIC_RTP_BIND_PORT", 0),
 		AdvertiseHost:    envStr("ESPMIC_ADVERTISE_HOST", ""),
 		AdvertiseRTPPort: envInt("ESPMIC_ADVERTISE_RTP_PORT", 0),
+		RTPDisappearTimeoutS: envInt("ESPMIC_RTP_DISAPPEAR_TIMEOUT_S", 3),
 	}
 }
 

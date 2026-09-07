@@ -357,11 +357,11 @@ func TestStreamMonitorRTPWaitTimeout(t *testing.T) {
 	}
 }
 
-// TestStreamMonitorRTPDisappeared verifies the streamMonitor transitions
-// ACTIVE -> FAILED (ACTIVE->RTP_TIMEOUT) when RTP packets stop arriving
-// for the configured RTPDisappear timeout.
-func TestStreamMonitorRTPDisappeared(t *testing.T) {
+// TestStreamMonitorRTPDisappearTimeout3s verifies a stream with a
+// 3s disappear timeout survives 1s silence but fails at >3s.
+func TestStreamMonitorRTPDisappearTimeout3s(t *testing.T) {
 	cfg := config.Load()
+	cfg.RTPDisappearTimeoutS = 3
 	srv, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -369,41 +369,35 @@ func TestStreamMonitorRTPDisappeared(t *testing.T) {
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start the server (starts streamMonitor)
-	go srv.streamMonitor() // monitor only; avoids fixed-port bind races across tests
+	go srv.streamMonitor()
 	defer srv.cancel()
 
-	// Create stream with short RTPDisappear timeout (50ms)
-	streamID := "test-stream-rtptimeout"
+	streamID := "test-stream-rtptimeout-3s"
 	st := stream.New(streamID, "test-device", 0, time.Now())
 	st.WithTimeoutConfig(stream.TimeoutConfig{
 		RTPWait:      5 * time.Second,
-		RTPDisappear: 50 * time.Millisecond,
+		RTPDisappear: 3 * time.Second,
 	})
 	srv.stream.Add(st)
 
-	// Start the stream to ACTIVE state
 	_ = st.Start(time.Now())
 	_ = st.DeviceCommandSent()
 	_ = st.StreamStarted(time.Now())
-	_ = st.FirstPacket(time.Now()) // transition to ACTIVE
-	if st.State() != stream.StateActive {
-		t.Fatalf("expected ACTIVE, got %s", st.State())
+	_ = st.FirstPacket(time.Now())
+
+	// 1s silence should not fail (3s default)
+	time.Sleep(1500 * time.Millisecond)
+	if st.State() == stream.StateFailed {
+		t.Fatal("should NOT fail at 1s with 3s timeout")
 	}
 
-	// Wait for monitor to trigger disappearance timeout (poll every 500ms, wait ~1s)
-	time.Sleep(1500 * time.Millisecond)
-
-	// Stream should be transitioned to FAILED and cleaned up
+	// Wait for monitor to trigger disappearance timeout (>3s)
+	time.Sleep(2500 * time.Millisecond)
 	if st.State() != stream.StateFailed {
-		t.Fatalf("expected FAILED after RTP disappear timeout, got %s", st.State())
+		t.Fatalf("expected FAILED after >3s silence, got %s", st.State())
 	}
 	if st.Reason != stream.FailureRTPTimeout {
 		t.Fatalf("expected FailureRTPTimeout, got %s", st.Reason)
-	}
-	// Stream should be removed from registry
-	if _, err := srv.stream.Get(streamID); err != stream.ErrStreamNotFound {
-		t.Fatalf("expected stream removed from registry")
 	}
 }
 

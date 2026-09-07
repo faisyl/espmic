@@ -157,8 +157,24 @@ func TestForEach(t *testing.T) {
 	}
 }
 
+func TestRTPDisappearedConfigurable(t *testing.T) {
+	// 3s disappear timeout: 1s silence should NOT fail.
+	s := New("s1", "d1", 1, t0)
+	s.WithTimeoutConfig(TimeoutConfig{RTPDisappear: 3 * time.Second})
+	s.Start(t0)
+	s.DeviceCommandSent()
+	s.StreamStarted(t0)
+	s.FirstPacket(t0)
+	if s.RTPDisappeared(t0.Add(time.Second)) {
+		t.Fatal("should not disappear at 1s with 3s timeout")
+	}
+	// >3s silence SHOULD fail.
+	if !s.RTPDisappeared(t0.Add(4 * time.Second)) {
+		t.Fatal("should disappear after 4s with 3s timeout")
+	}
+}
+
 func TestMarkServerRestartFailed(t *testing.T) {
-	// Accepts any non-terminal state.
 	accepts := []struct {
 		name  string
 		setup func(s *Stream)

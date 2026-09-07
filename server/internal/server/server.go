@@ -133,9 +133,13 @@ func (s *Server) Restore() error {
 			// Build the stream in CREATED, then use the dedicated restart
 			// transition so the in-memory state agrees with what we persist.
 			st := stream.New(rec.StreamID, rec.DeviceID, rec.SSRC, rec.Started)
+			disappear := time.Duration(s.cfg.RTPDisappearTimeoutS) * time.Second
+			if disappear <= 0 {
+				disappear = stream.DefaultRTPDisappearTimeout
+			}
 			st.WithTimeoutConfig(stream.TimeoutConfig{
 				RTPWait:      time.Duration(s.cfg.RTPWaitTimeoutS) * time.Second,
-				RTPDisappear: 1 * time.Second,
+				RTPDisappear: disappear,
 			})
 			if err := st.MarkServerRestartFailed(); err != nil {
 				return fmt.Errorf("mark stream %s failed: %w", rec.StreamID, err)
@@ -345,10 +349,14 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 
 	// Create stream in CREATED state
 	// SSRC is 0 at creation; the device chooses it and the receiver learns it from the first RTP packet (spec §8).
+	disappear := time.Duration(s.cfg.RTPDisappearTimeoutS) * time.Second
+	if disappear <= 0 {
+		disappear = stream.DefaultRTPDisappearTimeout
+	}
 	st := stream.New(streamID, deviceID, 0, time.Now())
 	st.WithTimeoutConfig(stream.TimeoutConfig{
 		RTPWait:      time.Duration(s.cfg.RTPWaitTimeoutS) * time.Second,
-		RTPDisappear: 1 * time.Second,
+		RTPDisappear: disappear,
 	})
 	s.stream.Add(st)
 
