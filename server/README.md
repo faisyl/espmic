@@ -430,47 +430,6 @@ All documented env vars (`ESPMIC_HTTP_ADDR`, `ESPMIC_CONTROL_ADDR`,
 `ESPMIC_RTP_BIND_PORT`, `ESPMIC_ADVERTISE_HOST`, `ESPMIC_ADVERTISE_RTP_PORT`)
 are wired in `docker-compose.yml`; source of truth is `internal/config/config.go`.
 
-## Docker / NAT RTP
-
-When the server runs inside a Docker container using bridge networking, the control connection `LocalAddr` is the container-internal IP (e.g. `172.21.0.2`). By default, the server instructs the ESP32 to send RTP audio packets to this address, which is unreachable from the physical LAN. Additionally, dynamic UDP port binding (`:0`) cannot be published cleanly across Docker.
-
-To route RTP through Docker/NAT:
-1. Set `ESPMIC_RTP_BIND_PORT=5004` to bind a predictable UDP port in the container.
-2. Publish that port in Docker (e.g. `-p 5004:5004/udp` or `ports:` in compose).
-3. Set `ESPMIC_ADVERTISE_HOST` to the Docker host's physical LAN IP (e.g. `192.168.1.100`) so the server instructs devices to stream to the host machine.
-4. (Optional) If your external host port differs from the container port (e.g. `50004:5004/udp`), set `ESPMIC_ADVERTISE_RTP_PORT=50004`.
-
-**Worked example (docker run):**
-```sh
-docker run -d \
-  --name espmic-server \
-  -p 8080:8080 \
-  -p 4433:4433 \
-  -p 5004:5004/udp \
-  -e ESPMIC_RTP_BIND_PORT=5004 \
-  -e ESPMIC_ADVERTISE_HOST=192.168.1.100 \
-  -v espmic-data:/data \
-  ghcr.io/faisyl/espmic-server:latest
-```
-
-**Worked example (docker compose):**
-In `docker-compose.yml`, uncomment and configure `ESPMIC_ADVERTISE_HOST`:
-```yaml
-environment:
-  ESPMIC_RTP_BIND_PORT: "5004"
-  ESPMIC_ADVERTISE_HOST: "192.168.1.100"
-ports:
-  - "8080:8080"
-  - "4433:4433"
-  - "5004:5004/udp"
-```
-
-All documented env vars (`ESPMIC_HTTP_ADDR`, `ESPMIC_CONTROL_ADDR`,
-`ESPMIC_TLS_CERT`, `ESPMIC_TLS_KEY`, `ESPMIC_DB_PATH`,
-`ESPMIC_JITTER_TARGET_MS`, `ESPMIC_RTP_WAIT_TIMEOUT_S`,
-`ESPMIC_RTP_BIND_PORT`, `ESPMIC_ADVERTISE_HOST`, `ESPMIC_ADVERTISE_RTP_PORT`)
-are wired in `docker-compose.yml`; source of truth is `internal/config/config.go`.
-
 ---
 
 ## Browsing recordings on the host

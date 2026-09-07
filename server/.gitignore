@@ -2,3 +2,6 @@ server/bin/
 server/espmic-server
 espmic.db
 dist/
+
+# Local operator env (never commit real values; use .env.example)
+.env
