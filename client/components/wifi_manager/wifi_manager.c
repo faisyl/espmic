@@ -212,7 +212,22 @@ esp_err_t wifi_manager_start(void)
     /* Provisioned: release the prov manager and start as a normal station. */
     wifi_prov_mgr_deinit();
     ESP_LOGI(TAG, "credentials present; starting station");
-    return esp_wifi_start();
+    esp_err_t err = esp_wifi_start();
+    if (err != ESP_OK) return err;
+
+    /* Disable WiFi modem-sleep power save. The IDF default (WIFI_PS_MIN_MODEM)
+     * parks the radio between DTIM beacons, which on this real-time audio path
+     * stalls the idle control TCP (observed as ~15 s "reset by peer" + stream
+     * teardown) and adds RTP jitter/loss. WIFI_PS_NONE keeps the radio always
+     * on -- required for stable control + low-latency RTP (the device is
+     * USB/mains powered, so the extra draw is acceptable). */
+    err = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_wifi_set_ps(NONE) failed: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "wifi power save disabled (WIFI_PS_NONE)");
+    }
+    return ESP_OK;
 }
 
 esp_err_t wifi_manager_reset_credentials(void)
