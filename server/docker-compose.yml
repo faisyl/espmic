@@ -12,6 +12,7 @@ services:
         GIT_COMMIT: "${GIT_COMMIT:-dev}"
         BUILD_DATE: "${BUILD_DATE:-unknown}"
     restart: unless-stopped
+    user: "1000:1000"
     environment:
       # All tunables (source of truth: internal/config/config.go):
       ESPMIC_HTTP_ADDR: ":8080"
@@ -40,7 +41,7 @@ services:
       - "4433:4433"       # control TLS/TCP
       - "5004:5004/udp"   # RTP UDP ingest
     volumes:
-      - espmic-data:/data
+      - ./data:/data
 
 # ---- RTP UDP ingest ----------------------------------------------------
 # The server binds a fixed RTP UDP port (ESPMIC_RTP_BIND_PORT: 5004) published
@@ -51,6 +52,3 @@ services:
 #   network_mode: host
 #   + remove the `ports:` block above
 
-volumes:
-  espmic-data:
-    name: espmic-data   # holds the SQLite DB (espmic.db) + recordings/
