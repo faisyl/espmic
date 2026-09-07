@@ -430,6 +430,96 @@ All documented env vars (`ESPMIC_HTTP_ADDR`, `ESPMIC_CONTROL_ADDR`,
 `ESPMIC_RTP_BIND_PORT`, `ESPMIC_ADVERTISE_HOST`, `ESPMIC_ADVERTISE_RTP_PORT`)
 are wired in `docker-compose.yml`; source of truth is `internal/config/config.go`.
 
+## Docker / NAT RTP
+
+When the server runs inside a Docker container using bridge networking, the control connection `LocalAddr` is the container-internal IP (e.g. `172.21.0.2`). By default, the server instructs the ESP32 to send RTP audio packets to this address, which is unreachable from the physical LAN. Additionally, dynamic UDP port binding (`:0`) cannot be published cleanly across Docker.
+
+To route RTP through Docker/NAT:
+1. Set `ESPMIC_RTP_BIND_PORT=5004` to bind a predictable UDP port in the container.
+2. Publish that port in Docker (e.g. `-p 5004:5004/udp` or `ports:` in compose).
+3. Set `ESPMIC_ADVERTISE_HOST` to the Docker host's physical LAN IP (e.g. `192.168.1.100`) so the server instructs devices to stream to the host machine.
+4. (Optional) If your external host port differs from the container port (e.g. `50004:5004/udp`), set `ESPMIC_ADVERTISE_RTP_PORT=50004`.
+
+**Worked example (docker run):**
+```sh
+docker run -d \
+  --name espmic-server \
+  -p 8080:8080 \
+  -p 4433:4433 \
+  -p 5004:5004/udp \
+  -e ESPMIC_RTP_BIND_PORT=5004 \
+  -e ESPMIC_ADVERTISE_HOST=192.168.1.100 \
+  -v espmic-data:/data \
+  ghcr.io/faisyl/espmic-server:latest
+```
+
+**Worked example (docker compose):**
+In `docker-compose.yml`, uncomment and configure `ESPMIC_ADVERTISE_HOST`:
+```yaml
+environment:
+  ESPMIC_RTP_BIND_PORT: "5004"
+  ESPMIC_ADVERTISE_HOST: "192.168.1.100"
+ports:
+  - "8080:8080"
+  - "4433:4433"
+  - "5004:5004/udp"
+```
+
+All documented env vars (`ESPMIC_HTTP_ADDR`, `ESPMIC_CONTROL_ADDR`,
+`ESPMIC_TLS_CERT`, `ESPMIC_TLS_KEY`, `ESPMIC_DB_PATH`,
+`ESPMIC_JITTER_TARGET_MS`, `ESPMIC_RTP_WAIT_TIMEOUT_S`,
+`ESPMIC_RTP_BIND_PORT`, `ESPMIC_ADVERTISE_HOST`, `ESPMIC_ADVERTISE_RTP_PORT`)
+are wired in `docker-compose.yml`; source of truth is `internal/config/config.go`.
+
+---
+
+## Browsing recordings on the host
+
+Recordings land in `/data/recordings/` inside the container. To make them
+directly browsable on the host without `sudo`, run the container with a UID/GID
+that matches your host user and bind-mount a host directory you own.
+
+### Quick start
+
+```sh
+# 1. Copy the example env file
+cp .env.example .env
+
+# 2. Edit .env with your host UID/GID (run `id -u` and `id -g` to find them)
+#    The defaults (1000:1000) work for the first user on most Linux systems.
+#    ESPMIC_DATA_DIR=./data   # host directory that will be bind-mounted
+
+# 2. Pre-create the data directory and set ownership to your UID:GID
+mkdir -p "$ESPMIC_DATA_DIR"
+sudo chown -R <your-uid>:<your-gid> "$ESPMIC_DATA_DIR"
+# Example:
+# mkdir -p ./data
+# sudo chown -R 1000:1000 ./data
+
+# 3. Start the stack
+docker compose up --build
+```
+
+Recordings will appear at `$ESPMIC_DATA_DIR/recordings/*.opus` on the host,
+browsable directly in your file manager or CLI — no `docker cp`, no `sudo`.
+
+### Environment variables (from `.env.example`)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ESPMIC_UID` | `1000` | Host UID the container runs as. Must match the owner of `ESPMIC_DATA_DIR`. |
+| `ESPMIC_GID` | `1000` | Host GID the container runs as. Must match the group of `ESPMIC_DATA_DIR`. |
+| `ESPMIC_DATA_DIR` | `./data` | Host directory bind-mounted to `/data` in the container. Must exist and be owned by `ESPMIC_UID:ESPMIC_GID` before starting. |
+
+### Notes
+
+- The `docker-compose.yml` uses `user: "${ESPMIC_UID:-1000}:${ESPMIC_GID:-1000}"` and `volumes: ${ESPMIC_DATA_DIR:-./data}:/data`.
+- The `ESPMIC_RECORDINGS_DIR` config defaults to `/data/recordings`, which lives on the bind-mount.
+- If `ESPMIC_DATA_DIR` is a relative path (e.g. `./data`), Docker Compose resolves it relative to the compose file directory.
+- **Important**: The host directory must be pre-created and `chown`ed to the correct UID:GID *before* `docker compose up`, because the container runs as a non-root user and cannot `chown` a root-owned bind mount.
+
+---
+
 ## Opus fidelity validation (spec §21 #1/#2)
 
 `libopus`/`ffmpeg` are NOT on the host. To validate pion/opus fidelity
