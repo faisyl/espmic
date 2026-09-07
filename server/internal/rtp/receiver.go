@@ -24,12 +24,15 @@ type Receiver struct {
 	streams map[string]*streamBinding // stream_id -> binding
 	metrics *metrics.Metrics
 	now     func() time.Time
+
+	onPacket func(streamID string, first bool) // per-accepted-packet liveness callback
 }
 
 type streamBinding struct {
 	streamID     string
 	ssrc         uint32
 	ssrcLearned  bool
+	firstSeen    bool // true once the first valid packet has been accepted
 	pt           uint16
 	port         uint16
 	pc           net.PacketConn
@@ -150,6 +153,18 @@ func (r *Receiver) SetWorkerCancel(streamID string, cancel context.CancelFunc) {
 	}
 }
 
+// SetOnPacket sets the per-accepted-packet liveness callback. The callback
+// fires for every SSRC/PT-validated packet pushed into the jitter buffer,
+// independent of decode/playout. first=true for the first valid packet on the
+// stream (triggers RTP_WAIT->ACTIVE), false thereafter (refreshes the RTP
+// disappearance clock). This decouples stream liveness from the audio worker
+// so a hanging/erroring decoder cannot stall liveness.
+func (r *Receiver) SetOnPacket(cb func(streamID string, first bool)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onPacket = cb
+}
+
 // CloseStream tears down the UDP socket and goroutine for streamID.
 func (r *Receiver) CloseStream(streamID string) {
 	r.mu.Lock()
@@ -203,13 +218,16 @@ func (r *Receiver) readLoop(ctx context.Context, b *streamBinding) {
 		}
 
 		// Learn SSRC from first VALID packet (correct PT + parseable RTP).
-		// Guard with receiver lock to avoid data race on ssrc/ssrcLearned.
+		// Guard with receiver lock to avoid data race on ssrc/ssrcLearned/firstSeen/onPacket.
 		r.mu.Lock()
 		if !b.ssrcLearned {
 			b.ssrc = p.SSRC
 			b.ssrcLearned = true
 		}
 		expectedSSRC := b.ssrc
+		cb := r.onPacket
+		first := !b.firstSeen
+		b.firstSeen = true
 		r.mu.Unlock()
 
 		if p.SSRC != expectedSSRC {
@@ -219,6 +237,13 @@ func (r *Receiver) readLoop(ctx context.Context, b *streamBinding) {
 		b.jb.Push(p, r.now())
 		if r.metrics != nil {
 			r.metrics.IncRTPPacketsReceived()
+		}
+
+		// Fire liveness callback for every accepted packet (spec §17:
+		// RTP_WAIT->ACTIVE on first, then refresh the RTP-disappear clock).
+		// This decouples liveness from the audio worker/decoder.
+		if cb != nil {
+			cb(b.streamID, first)
 		}
 	}
 }
