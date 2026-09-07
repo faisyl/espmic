@@ -468,32 +468,41 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 			}
 		})
 
-		// If recording enabled, create and start recorder (subscribed to PCM bus)
+		// If recording enabled, create and start WAV recorder (subscribed
+		// to PCM bus). This is the opt-in/best-effort decode path. The WAV
+		// recorder only supports "wav" format — opus recording is always-on
+		// below (socket->disk).
 		if rec.Enabled {
 			format := rec.Format
 			if format == "" {
 				format = "wav"
 			}
-			recorder, err := audio.NewRecorder(format, s.cfg.RecordingsDir, streamID, 48000, 2)
-			if err != nil {
-				slog.Error("recorder: failed to create", "stream_id", streamID, "err", err)
-			} else {
-				if err := recorder.Begin(time.Now()); err != nil {
-					slog.Error("recorder: failed to begin", "stream_id", streamID, "err", err)
+			if format == "wav" {
+				recorder, err := audio.NewRecorder(format, s.cfg.RecordingsDir, streamID, 48000, 2)
+				if err != nil {
+					slog.Error("recorder: failed to create", "stream_id", streamID, "err", err)
 				} else {
-					s.bus.Subscribe(recorder)
-					s.recordingsMu.Lock()
-					s.recordings[streamID] = recorder
-					s.recordingsMu.Unlock()
-					// Persist recording metadata
-					recID := streamID + "-rec"
-					_ = s.recRepo.Create(recID, streamID, 48000, 2, "opus", time.Now())
+					if err := recorder.Begin(time.Now()); err != nil {
+						slog.Error("recorder: failed to begin", "stream_id", streamID, "err", err)
+					} else {
+						s.bus.Subscribe(recorder)
+						s.recordingsMu.Lock()
+						s.recordings[streamID] = recorder
+						s.recordingsMu.Unlock()
+						// Persist recording metadata
+						recID := streamID + "-rec"
+						_ = s.recRepo.Create(recID, streamID, 48000, 2, "wav", time.Now())
+					}
 				}
 			}
+		}
 
-			// Record Opus to disk (socket->disk, no decode). This runs off
-			// the RTP receive path via onCompressed — independent of the
-			// PCM worker/decoder. Always created when recording is enabled.
+		// Record Opus to disk (socket->disk, no decode). This is the
+		// product's PRIMARY path — always on for every active stream,
+		// independent of rec.Enabled and independent of the PCM/WAV recorder.
+		// It runs off the RTP receive path via onCompressed, so a
+		// hanging/erroring decoder cannot block it.
+		{
 			opusRec, err := audio.NewOpusRecorder(s.cfg.RecordingsDir, streamID, 48000, 2, 312)
 			if err != nil {
 				slog.Error("opus recorder: failed to create", "stream_id", streamID, "err", err)
@@ -504,6 +513,7 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 				s.recordingsMu.Lock()
 				s.recordings[streamID+"-opus"] = opusRec
 				s.recordingsMu.Unlock()
+				_ = s.recRepo.Create(streamID+"-opus", streamID, 48000, 2, "opus", time.Now())
 			}
 		}
 
@@ -915,6 +925,48 @@ func (s *Server) DownloadRecording(recordingID string) (string, error) {
 		return "", fmt.Errorf("recording file not available")
 	}
 	return uri, nil
+}
+
+// ListRecordings returns all recording metadata from the database.
+func (s *Server) ListRecordings() ([]map[string]any, error) {
+	rows, err := s.db.Query(
+		`SELECT recording_id,stream_id,sample_rate,channels,codec,start_time,end_time,bytes_stored,uri
+		 FROM recordings ORDER BY start_time DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]any
+	for rows.Next() {
+		var recID, streamID, codec string
+		var sampleRate, channels int
+		var startTime, endTime sql.NullInt64
+		var bytesStored int64
+		var uri sql.NullString
+		if err := rows.Scan(&recID, &streamID, &sampleRate, &channels, &codec, &startTime, &endTime, &bytesStored, &uri); err != nil {
+			return nil, err
+		}
+		result := map[string]any{
+			"recording_id": recID,
+			"stream_id":    streamID,
+			"sample_rate":  sampleRate,
+			"channels":     channels,
+			"codec":        codec,
+			"bytes_stored": bytesStored,
+		}
+		if startTime.Valid {
+			result["start_time"] = time.UnixMilli(startTime.Int64).UTC().Format(time.RFC3339)
+		}
+		if endTime.Valid {
+			result["end_time"] = time.UnixMilli(endTime.Int64).UTC().Format(time.RFC3339)
+		}
+		if uri.Valid {
+			result["uri"] = uri.String
+		}
+		results = append(results, result)
+	}
+	return results, nil
 }
 
 func (s *Server) Close() error {

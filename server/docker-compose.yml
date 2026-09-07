@@ -33,6 +33,8 @@ services:
       # by ESP32 devices (e.g. 192.168.1.100). When empty, defaults to session IP.
       ESPMIC_ADVERTISE_HOST: "10.10.10.151"  # Set to host LAN IP in .env
       ESPMIC_ADVERTISE_RTP_PORT: "${ESPMIC_ADVERTISE_RTP_PORT:-5004}"
+      # Recordings directory (must be under the writable /data volume):
+      ESPMIC_RECORDINGS_DIR: "/data/recordings"
     ports:
       - "8080:8080"       # HTTP management API
       - "4433:4433"       # control TLS/TCP

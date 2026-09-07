@@ -76,7 +76,7 @@ func Load() *Config {
 		JitterTargetMS:       envInt("ESPMIC_JITTER_TARGET_MS", 60),
 		RTPWaitTimeoutS:      envInt("ESPMIC_RTP_WAIT_TIMEOUT_S", 5),
 		DBPath:               envStr("ESPMIC_DB_PATH", "espmic.db"),
-		RecordingsDir:        envStr("ESPMIC_RECORDINGS_DIR", "recordings"),
+		RecordingsDir:        envStr("ESPMIC_RECORDINGS_DIR", "/data/recordings"),
 		RTPBindPort:          envInt("ESPMIC_RTP_BIND_PORT", 0),
 		AdvertiseHost:        envStr("ESPMIC_ADVERTISE_HOST", ""),
 		AdvertiseRTPPort:     envInt("ESPMIC_ADVERTISE_RTP_PORT", 0),

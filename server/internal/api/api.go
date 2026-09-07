@@ -45,6 +45,7 @@ type Server interface {
 	// Recording methods
 	GetRecording(recordingID string) (map[string]any, error)
 	DownloadRecording(recordingID string) (string, error)
+	ListRecordings() ([]map[string]any, error)
 	// Device status (GAP-02/03)
 	GetDeviceStatus(ctx context.Context, deviceID string) (control.Message, error)
 	// Device final stats (GAP-04/19)
@@ -89,6 +90,7 @@ func RegisterRoutes(mux *http.ServeMux, cfg *config.Config, srv Server) {
 	mux.HandleFunc("GET /api/streams/{id}", h.handleStream)
 	mux.HandleFunc("GET /api/streams", h.handleStreams)
 	mux.HandleFunc("GET /api/streams/{id}/stats", h.handleStreamStats)
+	mux.HandleFunc("GET /api/recordings", h.handleRecordings)
 	mux.HandleFunc("GET /api/recordings/{id}", h.handleRecording)
 	mux.HandleFunc("GET /api/recordings/{id}/download", h.handleRecordingDownload)
 	mux.HandleFunc("GET /api/metrics", h.handleMetrics)
@@ -359,6 +361,15 @@ func (h *Handlers) handleStreamStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handlers) handleRecordings(w http.ResponseWriter, _ *http.Request) {
+	recs, err := h.srv.ListRecordings()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, recs)
 }
 
 func (h *Handlers) handleRecording(w http.ResponseWriter, r *http.Request) {

@@ -190,6 +190,27 @@ func (s *flowFakeSrv) DownloadRecording(recID string) (string, error) {
 	return uri, nil
 }
 
+func (s *flowFakeSrv) ListRecordings() ([]map[string]any, error) {
+	rows, err := s.db.Query(`SELECT recording_id,stream_id,sample_rate,channels,codec,start_time,end_time,bytes_stored,uri FROM recordings ORDER BY start_time DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var results []map[string]any
+	for rows.Next() {
+		var rID, sID, codec string
+		var sr, ch int
+		var start, end sql.NullInt64
+		var b int64
+		var uri sql.NullString
+		if err := rows.Scan(&rID, &sID, &sr, &ch, &codec, &start, &end, &b, &uri); err != nil {
+			return nil, err
+		}
+		results = append(results, map[string]any{"recording_id": rID, "stream_id": sID})
+	}
+	return results, nil
+}
+
 // TestRecordingFlowHTTP is the end-to-end HTTP test Jim requested for
 // gap-recording-wireup: StartStream → StopStream → GET /api/recordings/{id} → /download.
 func TestRecordingFlowHTTP(t *testing.T) {
