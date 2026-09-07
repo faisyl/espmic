@@ -64,11 +64,16 @@ Configuration is loaded from environment variables with sensible local defaults 
 | `ESPMIC_JITTER_TARGET_MS` | `60` | int | Target playout delay for jitter buffer in milliseconds |
 | `ESPMIC_RTP_WAIT_TIMEOUT_S` | `5` | int | Timeout in seconds waiting for RTP packets post stream start |
 | `ESPMIC_DB_PATH` | `espmic.db` | string | Path to SQLite database file |
+| `ESPMIC_RTP_BIND_PORT` | `0` | int | UDP port to bind for RTP ingest. `0` = dynamic port per stream (default). Set to a fixed port (e.g. `5004`) when running in Docker or behind NAT. |
+| `ESPMIC_ADVERTISE_HOST` | `""` | string | Explicit host/IP advertised to devices for RTP destination. Empty = derive from control connection session IP (default). Set to Docker host LAN IP when containerized. |
+| `ESPMIC_ADVERTISE_RTP_PORT` | `0` | int | Explicit RTP destination port advertised to devices. `0` = advertise the actually-bound port (default). Set when external host port differs from container bind port. |
 
 ### Listening Ports & Protocols
 
 - **Port `8080` (TCP - HTTP):** Serves the management REST API (`/health`, `/api/devices`, `/api/streams`, `/api/metrics`) and WebSocket endpoints for live audio monitoring.
 - **Port `9000` (TCP / TLS):** Persistent control connection listener for ESP32 clients. If `ESPMIC_TLS_CERT` and `ESPMIC_TLS_KEY` environment variables are configured, TLS encryption is enabled; otherwise, it operates over plain TCP.
+- **Port `5004` (UDP - RTP Ingest):** RTP audio ingest receiver (when `ESPMIC_RTP_BIND_PORT` is configured; binds dynamically to `:0` when `0`).
+- **Port `5004` (UDP - RTP Ingest):** RTP audio ingest receiver (when `ESPMIC_RTP_BIND_PORT` is configured; binds dynamically to `:0` when `0`).
 
 ## Running the Server
 
@@ -384,16 +389,46 @@ ESPMIC_TLS_CERT=/data/certs/cert.pem ESPMIC_TLS_KEY=/data/certs/key.pem \
 ```
 Device hello must include `{"type":"hello","device_id":"esp32-001","credential":"super-secret-token"}`.
 
-**RTP UDP ingest** uses one dynamic UDP port per managed stream (spec §17), so
-it cannot be reached through the TCP `ports:` mapping above. The compose file
-documents the two options — host networking or a mapped UDP range — with a
-commented `network_mode: host` block. Until one is enabled, the HTTP API + TLS
-control plane work but RTP receive does not.
+### Docker / NAT RTP
+
+When the server runs inside a Docker container using bridge networking, the control connection `LocalAddr` is the container-internal IP (e.g. `172.21.0.2`). By default, the server instructs the ESP32 to send RTP audio packets to this address, which is unreachable from the physical LAN. Additionally, dynamic UDP port binding (`:0`) cannot be published cleanly across Docker.
+
+To route RTP through Docker/NAT:
+1. Set `ESPMIC_RTP_BIND_PORT=5004` to bind a predictable UDP port in the container.
+2. Publish that port in Docker (e.g. `-p 5004:5004/udp` or `ports:` in compose).
+3. Set `ESPMIC_ADVERTISE_HOST` to the Docker host's physical LAN IP (e.g. `192.168.1.100`) so the server instructs devices to stream to the host machine.
+4. (Optional) If your external host port differs from the container port (e.g. `50004:5004/udp`), set `ESPMIC_ADVERTISE_RTP_PORT=50004`.
+
+**Worked example (docker run):**
+```sh
+docker run -d \
+  --name espmic-server \
+  -p 8080:8080 \
+  -p 4433:4433 \
+  -p 5004:5004/udp \
+  -e ESPMIC_RTP_BIND_PORT=5004 \
+  -e ESPMIC_ADVERTISE_HOST=192.168.1.100 \
+  -v espmic-data:/data \
+  ghcr.io/faisyl/espmic-server:latest
+```
+
+**Worked example (docker compose):**
+In `docker-compose.yml`, uncomment and configure `ESPMIC_ADVERTISE_HOST`:
+```yaml
+environment:
+  ESPMIC_RTP_BIND_PORT: "5004"
+  ESPMIC_ADVERTISE_HOST: "192.168.1.100"
+ports:
+  - "8080:8080"
+  - "4433:4433"
+  - "5004:5004/udp"
+```
 
 All documented env vars (`ESPMIC_HTTP_ADDR`, `ESPMIC_CONTROL_ADDR`,
 `ESPMIC_TLS_CERT`, `ESPMIC_TLS_KEY`, `ESPMIC_DB_PATH`,
-`ESPMIC_JITTER_TARGET_MS`, `ESPMIC_RTP_WAIT_TIMEOUT_S`) are wired in
-`docker-compose.yml`; source of truth is `internal/config/config.go`.
+`ESPMIC_JITTER_TARGET_MS`, `ESPMIC_RTP_WAIT_TIMEOUT_S`,
+`ESPMIC_RTP_BIND_PORT`, `ESPMIC_ADVERTISE_HOST`, `ESPMIC_ADVERTISE_RTP_PORT`)
+are wired in `docker-compose.yml`; source of truth is `internal/config/config.go`.
 
 ## Opus fidelity validation (spec §21 #1/#2)
 

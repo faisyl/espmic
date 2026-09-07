@@ -36,6 +36,8 @@ USER espmic
 EXPOSE 8080
 # control TLS/TCP (spec §7)
 EXPOSE 9000
+# RTP UDP ingest (spec §9)
+EXPOSE 5004/udp
 
 VOLUME ["/data"]
 

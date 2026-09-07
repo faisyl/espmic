@@ -27,25 +27,27 @@ services:
       ESPMIC_JITTER_TARGET_MS: "60"
       ESPMIC_RTP_WAIT_TIMEOUT_S: "5"
       ESPMIC_LOG_LEVEL: "debug"
+      # Fixed UDP port for RTP ingest (bound inside container and published):
+      ESPMIC_RTP_BIND_PORT: "5004"
+      # Operator sets ESPMIC_ADVERTISE_HOST to the Docker host LAN IP reachable
+      # by ESP32 devices (e.g. 192.168.1.100). When empty, defaults to session IP.
+      ESPMIC_ADVERTISE_HOST: "${ESPMIC_ADVERTISE_HOST:-}"  # Set to host LAN IP in .env
+      ESPMIC_ADVERTISE_RTP_PORT: "${ESPMIC_ADVERTISE_RTP_PORT:-5004}"
     ports:
-      - "8080:8080"   # HTTP management API
-      - "4433:4433"   # control TLS/TCP
+      - "8080:8080"       # HTTP management API
+      - "4433:4433"       # control TLS/TCP
+      - "5004:5004/udp"   # RTP UDP ingest
     volumes:
       - espmic-data:/data
 
 # ---- RTP UDP ingest ----------------------------------------------------
-# The server opens a fresh UDP socket per managed stream (spec §17), i.e.
-# dynamic port numbers — it cannot be exposed with static `ports:` mappings.
-# Use one of:
-#   a) host networking (simplest; the server binds UDP directly on the host):
-#        network_mode: host
-#        + remove the `ports:` block above
-#   b) a mapped UDP range (requires the range to be fixed in the server /
-#      NAT/firewall rules on the host):
-#        ports:
-#          - "9000-9100:9000-9100/udp"
-# Default is `ports:` TCP-only (management API + control) — RTP ingest is
-# disabled unless one of the options above is enabled.
+# The server binds a fixed RTP UDP port (ESPMIC_RTP_BIND_PORT: 5004) published
+# as 5004:5004/udp. Behind Docker/NAT, set ESPMIC_ADVERTISE_HOST to the host LAN
+# IP so devices send RTP to the host rather than the container-internal IP.
+# Set ESPMIC_ADVERTISE_RTP_PORT if the published host port differs from the container port.
+# Alternatively, use host networking:
+#   network_mode: host
+#   + remove the `ports:` block above
 
 volumes:
   espmic-data:
