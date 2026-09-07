@@ -225,7 +225,15 @@ tr:last-child td{border-bottom:none}
       h+='<td class="mono">'+esc(d.Firmware||"—")+'</td>';
       h+='<td>';
       if(onl){
-        h+='<button class="btn btn-primary" data-device="'+esc(d.DeviceID)+'" aria-label="Start stream on '+esc(d.DeviceID)+'"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg> Start</button>';
+        var activeStream=null;
+        for(var k=0;k<streamListCache.length;k++){
+          if(streamListCache[k].DeviceID===d.DeviceID && (streamListCache[k].State==="ACTIVE"||streamListCache[k].State==="RTP_WAIT"||streamListCache[k].State==="STARTING")){activeStream=streamListCache[k];break;}
+        }
+        if(activeStream){
+          h+='<button class="btn btn-danger" data-stream="'+esc(activeStream.StreamID||"")+'" aria-label="Stop stream on '+esc(d.DeviceID)+'"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12"/></svg> Stop</button>';
+        } else {
+          h+='<button class="btn btn-primary" data-device="'+esc(d.DeviceID)+'" aria-label="Start stream on '+esc(d.DeviceID)+'"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg> Start</button>';
+        }
       } else {
         h+='<span style="color:var(--muted);font-size:.8rem">Offline</span>';
       }
@@ -234,11 +242,12 @@ tr:last-child td{border-bottom:none}
     h+='</tbody></table>';
     el.innerHTML=h;
     // Attach click handlers for start stream buttons
-    var btns=el.querySelectorAll('button[data-device]');
+    var btns=el.querySelectorAll('button[data-device],button[data-stream]');
     for(var j=0;j<btns.length;j++){
       btns[j].addEventListener("click",function(e){
+        var streamId=e.currentTarget.getAttribute("data-stream");
         var deviceId=e.currentTarget.getAttribute("data-device");
-        startStream(deviceId);
+        if(streamId){stopStream(streamId);}else{startStream(deviceId);}
       });
     }
   }
