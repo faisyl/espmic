@@ -21,11 +21,14 @@ static const char *TAG = "opus_task";
  * single UDP datagram after the 12-byte RTP header. */
 #define OPUS_MAX_PACKET 1500
 
-/* opus_encode() for 48 kHz stereo at complexity 6 uses well over 8 KB of call
- * stack; an 8 KB task stack overflowed on hardware (confirmed by a device
- * "stack overflow in task opus" backtrace). 20 KB leaves comfortable margin
- * above the ~12-16 KB worst case. */
-#define OPUS_TASK_STACK 20480
+/* opus_encode() for 48 kHz stereo at complexity 6 has a very deep call stack.
+ * Measured on hardware: an 8 KB task stack overflowed, and so did 20 KB (the
+ * high-water probe showed only ~1.8 KB used at the top of the loop, i.e. the
+ * first opus_encode() call itself consumed the remaining >18 KB before the next
+ * probe). libopus float encode at this complexity/stereo peaks in the
+ * ~25-35 KB range, so give the task 40 KB. The high-water log below reports the
+ * true post-encode headroom so this can be trimmed later if desired. */
+#define OPUS_TASK_STACK 40960
 
 struct opus_task_ctx {
     opus_task_config_t cfg;
@@ -69,12 +72,15 @@ static void opus_task(void *arg)
     while (ctx->running) {
         esp_task_wdt_reset();
 
-        /* Periodically report the minimum free stack (words) so stack headroom
-         * is visible on-device; a small/shrinking value means the OPUS_TASK_STACK
-         * size is too tight. ~250 frames ~= 5 s at 20 ms/frame. */
-        if ((dbg_n++ % 250u) == 0u) {
-            ESP_LOGI(TAG, "opus stack high-water (min free words): %u",
-                     (unsigned)uxTaskGetStackHighWaterMark(NULL));
+        /* Periodically report the minimum free stack so headroom is visible
+         * on-device; a small/shrinking value means OPUS_TASK_STACK is too tight.
+         * NOTE: on ESP-IDF uxTaskGetStackHighWaterMark() returns BYTES (not
+         * words as in vanilla FreeRTOS). Logged every ~50 frames (~1 s at
+         * 20 ms/frame) so the true post-encode peak shows up quickly. */
+        if ((dbg_n++ % 50u) == 0u) {
+            ESP_LOGI(TAG, "opus stack high-water (min free bytes): %u of %u",
+                     (unsigned)uxTaskGetStackHighWaterMark(NULL),
+                     (unsigned)OPUS_TASK_STACK);
         }
 
         if (!take_frame(ctx, frame)) {
