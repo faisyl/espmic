@@ -31,7 +31,7 @@ services:
       ESPMIC_RTP_BIND_PORT: "5004"
       # Operator sets ESPMIC_ADVERTISE_HOST to the Docker host LAN IP reachable
       # by ESP32 devices (e.g. 192.168.1.100). When empty, defaults to session IP.
-      ESPMIC_ADVERTISE_HOST: "${ESPMIC_ADVERTISE_HOST:-}"  # Set to host LAN IP in .env
+      ESPMIC_ADVERTISE_HOST: "10.10.10.151"  # Set to host LAN IP in .env
       ESPMIC_ADVERTISE_RTP_PORT: "${ESPMIC_ADVERTISE_RTP_PORT:-5004}"
     ports:
       - "8080:8080"       # HTTP management API
