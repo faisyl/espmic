@@ -452,7 +452,16 @@ func (s *Server) StartStream(ctx context.Context, deviceID string, purpose strin
 			if err != nil {
 				return
 			}
-			if first {
+			// Promote RTP_WAIT->ACTIVE based on the STREAM's own state, not the
+			// receiver's one-shot `first` flag. Bind() starts the readLoop
+			// before the stream is registered (s.stream.Add) and the device
+			// floods the RTP port continuously, so an early packet can burn the
+			// receiver's first-flag while Get() still fails — leaving the stream
+			// stuck in RTP_WAIT forever. State-based promotion is idempotent and
+			// race-free: whichever packet first finds the stream in RTP_WAIT
+			// drives it ACTIVE; the rest refresh the disappearance clock.
+			_ = first
+			if st.State() == stream.StateRTPWait {
 				_ = st.FirstPacket(time.Now())
 			} else {
 				st.Packet(time.Now())
