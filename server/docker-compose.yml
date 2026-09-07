@@ -15,7 +15,7 @@ services:
     environment:
       # All tunables (source of truth: internal/config/config.go):
       ESPMIC_HTTP_ADDR: ":8080"
-      ESPMIC_CONTROL_ADDR: ":9000"
+      ESPMIC_CONTROL_ADDR: ":4433"
       # TLS for the control connection — the stack auto-generates a
       # self-signed pair on first start at these paths (persistent volume);
       # empty means plain TCP. Mount your own cert/key at these paths to
@@ -29,7 +29,7 @@ services:
       ESPMIC_LOG_LEVEL: "debug"
     ports:
       - "8080:8080"   # HTTP management API
-      - "4433:9000"   # control TLS/TCP
+      - "4433:4433"   # control TLS/TCP
     volumes:
       - espmic-data:/data
 
