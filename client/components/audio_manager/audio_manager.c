@@ -86,6 +86,16 @@ static void *aud_alloc(size_t n)
     return p;
 }
 
+/* Emit a heap snapshot when a per-stream allocation fails (spec Section 6). */
+static void log_heap_diag(const char *label, size_t req_bytes,
+                          size_t free_internal, size_t free_spiram,
+                          size_t largest_internal, size_t largest_spiram)
+{
+    ESP_LOGE(TAG, "diag %s: asked=%zu internal_free=%zu spiram_free=%zu internal_largest=%zu spiram_largest=%zu",
+             label, req_bytes, free_internal, free_spiram,
+             largest_internal, largest_spiram);
+}
+
 esp_err_t audio_manager_init(const audio_manager_config_t *cfg)
 {
     if (!cfg) return ESP_ERR_INVALID_ARG;

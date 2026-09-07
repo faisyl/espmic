@@ -172,7 +172,9 @@ static esp_err_t start_provisioning(void)
      * This is the standard Espressif provisioning service
      * (0000ffff-0000-1000-8000-00805f9b34fb, little-endian), recognised by the
      * ESP Provisioning / ESP SoftAP apps out of the box. */
-    const uint8_t service_uuid[16] = {
+    /* static (not stack) + non-const: the BLE stack retains this pointer for
+     * the lifetime of provisioning, and the IDF API takes a mutable uint8_t*. */
+    static uint8_t service_uuid[16] = {
         0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80,
         0x00, 0x10, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
     };
