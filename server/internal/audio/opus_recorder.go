@@ -4,12 +4,23 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 )
+
+// opusPacket is a received RTP Opus payload queued for disk write.
+type opusPacket struct {
+	ts      uint32
+	payload []byte
+}
 
 // OpusRecorder muxes received RTP Opus payloads into an Ogg/Opus file
 // (RFC 7845). It runs off the RTP receive path — no server-side PCM decode
 // on the recording path. One .opus file per stream session.
+//
+// WritePacket is non-blocking: it enqueues the packet to a buffered channel
+// drained by a separate writer goroutine, so the RTP receive loop never
+// blocks on disk I/O.
 //
 // Ogg page layout (RFC 7845 §3):
 //
@@ -26,13 +37,22 @@ type OpusRecorder struct {
 	startTS  uint32
 	prevGP   int64
 
+	mu        sync.Mutex
 	f         *os.File
 	startTime time.Time
 	bytes     int64
 	closed    bool
+
+	// Buffered channel decouples the RTP receive loop from disk I/O.
+	ch chan *opusPacket
+	// done closed when the writer goroutine has flushed and exited.
+	done chan struct{}
+	// writerErr holds the first error from the writer goroutine.
+	writerErr error
 }
 
-// NewOpusRecorder opens the file and writes OpusHead + OpusTags headers.
+// NewOpusRecorder opens the file, writes OpusHead + OpusTags headers, and
+// starts the background writer goroutine.
 func NewOpusRecorder(dir, base string, rate, channels int, preskip uint16) (*OpusRecorder, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -48,27 +68,89 @@ func NewOpusRecorder(dir, base string, rate, channels int, preskip uint16) (*Opu
 		rate:      rate,
 		f:         f,
 		startTime: time.Now(),
+		ch:        make(chan *opusPacket, 256),
+		done:      make(chan struct{}),
 	}
 	r.writeOpusHead()
 	r.writeOpusTags()
+	go r.writer()
 	return r, nil
+}
+
+// writer drains the packet channel and writes Ogg pages to disk.
+func (r *OpusRecorder) writer() {
+	defer close(r.done)
+	for pkt := range r.ch {
+		r.writePageForPacket(pkt)
+	}
+}
+
+// writePageForPacket writes a single Ogg page for the given Opus packet.
+func (r *OpusRecorder) writePageForPacket(pkt *opusPacket) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	if r.startTS == 0 {
+		r.startTS = pkt.ts
+	}
+	gp := int64(pkt.ts) - int64(r.startTS) - int64(r.preskip)
+	if gp < 0 {
+		gp = 0
+	}
+	r.prevGP = gp
+	r.writePage(gp, pkt.payload)
+}
+
+// WritePacket enqueues an Opus packet for non-blocking disk write. If the
+// channel is full (writer falling behind), the packet is dropped so the RTP
+// receive loop never stalls.
+func (r *OpusRecorder) WritePacket(rtpTS uint32, payload []byte) {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return
+	}
+	r.mu.Unlock()
+	select {
+	case r.ch <- &opusPacket{ts: rtpTS, payload: payload}:
+	default:
+		// Channel full; drop to keep the receive loop moving.
+	}
+}
+
+// Finalize closes the channel, waits for the writer to flush, writes the EOS
+// page, and closes the file.
+func (r *OpusRecorder) Finalize(end time.Time) (string, int64, error) {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return "", 0, fmt.Errorf("opus: already finalized")
+	}
+	r.closed = true
+	r.mu.Unlock()
+
+	close(r.ch)
+	<-r.done
+
+	uri := r.f.Name()
+	r.writeEOSPage(r.prevGP)
+	err := r.f.Close()
+	return uri, r.bytes, err
 }
 
 // writePage appends an Ogg page with the given granulepos and data.
 func (r *OpusRecorder) writePage(granulepos int64, data []byte) {
 	const headLen = 27
-	// Ogg lacing: floor(len/255)+1 segments. The +1 always emits the
-	// terminating segment (a 0 lacing value when len is an exact multiple of
-	// 255) so a packet is never mis-framed as "continued" (RFC 3533 §6).
 	nseg := len(data)/255 + 1
 	hdr := [headLen]byte{}
 	copy(hdr[0:4], "OggS")
-	hdr[4] = 0 // version
-	hdr[5] = 0 // header type (set by caller for BOS/EOS)
+	hdr[4] = 0
+	hdr[5] = 0
 	binary.LittleEndian.PutUint64(hdr[6:14], uint64(granulepos))
 	binary.LittleEndian.PutUint32(hdr[14:18], r.serial)
 	binary.LittleEndian.PutUint32(hdr[18:22], r.seq)
-	// crc slot reserved; computed after segment table
 	hdr[26] = byte(nseg)
 
 	segTable := make([]byte, nseg)
@@ -95,17 +177,14 @@ func (r *OpusRecorder) writePage(granulepos int64, data []byte) {
 
 // writeOpusHead writes the OpusHead identification page (BOS).
 func (r *OpusRecorder) writeOpusHead() {
-	// OpusHead payload: "OpusHead"(8) + ver(1) + ch(1) + preskip(2 LE) +
-	// rate(4 LE, always 48000) + gain(2 LE) + map_family(1)
 	head := make([]byte, 19)
 	copy(head[0:8], "OpusHead")
-	head[8] = 1 // version
+	head[8] = 1
 	head[9] = byte(r.channels)
 	binary.LittleEndian.PutUint16(head[10:12], r.preskip)
 	binary.LittleEndian.PutUint32(head[12:16], uint32(r.rate))
-	binary.LittleEndian.PutUint16(head[16:18], 0) // output gain
-	head[18] = 0                                  // channel mapping family (mono/stereo)
-	// BOS flag set in header type byte
+	binary.LittleEndian.PutUint16(head[16:18], 0)
+	head[18] = 0
 	page := r.buildBOSPage(0, head)
 	r.f.Write(page)
 	r.seq++
@@ -114,9 +193,6 @@ func (r *OpusRecorder) writeOpusHead() {
 
 func (r *OpusRecorder) buildBOSPage(granulepos int64, data []byte) []byte {
 	const headLen = 27
-	// Ogg lacing: floor(len/255)+1 segments. The +1 always emits the
-	// terminating segment (a 0 lacing value when len is an exact multiple of
-	// 255) so a packet is never mis-framed as "continued" (RFC 3533 §6).
 	nseg := len(data)/255 + 1
 	hdr := [headLen]byte{}
 	copy(hdr[0:4], "OggS")
@@ -155,40 +231,9 @@ func (r *OpusRecorder) writeOpusTags() {
 	tags = append(tags, vendorLen...)
 	tags = append(tags, []byte(vendor)...)
 	commentLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(commentLen, 0) // no user comments
+	binary.LittleEndian.PutUint32(commentLen, 0)
 	tags = append(tags, commentLen...)
 	r.writePage(0, tags)
-}
-
-// WritePacket appends an Opus packet as a new Ogg page. granulepos is derived
-// from the RTP timestamp at 48kHz, with preskip subtracted on the first page.
-func (r *OpusRecorder) WritePacket(rtpTS uint32, payload []byte) {
-	if r.closed {
-		return
-	}
-	if r.startTS == 0 {
-		r.startTS = rtpTS
-	}
-	// granulepos = (rtpTS - startTS) - preskip, in 48kHz units
-	gp := int64(rtpTS) - int64(r.startTS) - int64(r.preskip)
-	if gp < 0 {
-		gp = 0
-	}
-	r.prevGP = gp
-	r.writePage(gp, payload)
-}
-
-// Finalize closes the file with an EOS page and returns the URI + byte size.
-func (r *OpusRecorder) Finalize(end time.Time) (string, int64, error) {
-	if r.closed {
-		return "", 0, fmt.Errorf("opus: already finalized")
-	}
-	// EOS page: empty data, granulepos = last gp
-	r.writeEOSPage(r.prevGP)
-	uri := r.f.Name()
-	err := r.f.Close()
-	r.closed = true
-	return uri, r.bytes, err
 }
 
 func (r *OpusRecorder) writeEOSPage(granulepos int64) {
@@ -200,7 +245,7 @@ func (r *OpusRecorder) writeEOSPage(granulepos int64) {
 	binary.LittleEndian.PutUint64(hdr[6:14], uint64(granulepos))
 	binary.LittleEndian.PutUint32(hdr[14:18], r.serial)
 	binary.LittleEndian.PutUint32(hdr[18:22], r.seq)
-	hdr[26] = 0 // no segments
+	hdr[26] = 0
 	page := hdr[:]
 	crc := oggCRC(page)
 	binary.LittleEndian.PutUint32(page[22:26], crc)

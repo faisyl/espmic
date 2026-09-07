@@ -81,6 +81,11 @@ func (r *Receiver) Bind(ctx context.Context, streamID string, pt uint8, jitterTa
 	if err != nil {
 		return 0, err
 	}
+	// Bump SO_RCVBUF so the kernel doesn't drop packets under load while the
+	// readLoop does per-packet work (push + callbacks).
+	if udpConn, ok := pc.(*net.UDPConn); ok {
+		_ = udpConn.SetReadBuffer(1024 * 1024)
+	}
 	port := uint16(pc.LocalAddr().(*net.UDPAddr).Port)
 	if jitterTarget <= 0 {
 		jitterTarget = 60 * time.Millisecond
