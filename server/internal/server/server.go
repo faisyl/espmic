@@ -870,7 +870,8 @@ func (s *Server) pushStreamMetrics(streamID string, stats rtp.Stats, now time.Ti
 }
 
 // OnDeviceDisconnect is called when a control session ends (after hello_ack).
-// Fails all ACTIVE streams for the disconnected device (spec §17: ACTIVE->DEVICE_DISCONNECTED).
+// Fails all ACTIVE streams for the disconnected device (spec §17: ACTIVE->DEVICE_DISCONNECTED)
+// and marks the device offline.
 func (s *Server) OnDeviceDisconnect(deviceID string) {
 	if deviceID == "" {
 		return
@@ -886,6 +887,9 @@ func (s *Server) OnDeviceDisconnect(deviceID string) {
 	for _, id := range toCleanup {
 		s.cleanupStreamByID(id)
 	}
+	// Mark device offline so it no longer appears as "online" in /api/devices
+	s.device.SetOffline(deviceID)
+	slog.Debug("device: marked offline", "device_id", deviceID)
 }
 
 // cleanupStreamByID closes RTP resources and removes the stream from the registry by ID.
