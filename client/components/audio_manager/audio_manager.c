@@ -101,7 +101,7 @@ esp_err_t audio_manager_init(const audio_manager_config_t *cfg)
     if (!cfg) return ESP_ERR_INVALID_ARG;
     memset(&g, 0, sizeof(g));
     g.cfg = *cfg;
-    if (g.cfg.complexity == 0) g.cfg.complexity = 6;
+    if (g.cfg.complexity == 0) g.cfg.complexity = 5;
     if (g.cfg.default_bitrate == 0) g.cfg.default_bitrate = 128000;
     g.inited = true;
     ESP_LOGI(TAG, "init: bclk=%d ws=%d din=%d br=%u",

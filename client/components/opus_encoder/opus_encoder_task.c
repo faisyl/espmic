@@ -91,9 +91,13 @@ static void opus_task(void *arg)
         }
 
         /* Narrow the 24-bit-in-int32 samples to the int16 libopus expects
-         * (encoder boundary conversion, spec Sections 5/7). */
+         * (encoder boundary conversion, spec Sections 5/7). Apply rounding
+         * (add half LSB before shift) and hard-saturate to prevent wrap. */
         for (int i = 0; i < OPUS_FRAME_SAMPLES; i++) {
-            pcm16[i] = (opus_int16)(frame[i] >> 8); /* 24-bit -> 16-bit */
+            int32_t v = (frame[i] + (1 << 7)) >> 8;  /* round 24->16 */
+            if (v > 32767) v = 32767;
+            if (v < -32768) v = -32768;
+            pcm16[i] = (opus_int16)v;
         }
 
         int n = opus_encode(ctx->enc, pcm16, OPUS_FRAME_SAMPLES_PER_CH,

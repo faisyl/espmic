@@ -47,6 +47,7 @@ typedef struct {
     volatile uint64_t *late_counter;  /* may be NULL */
     int                task_priority;  /* 0 => default (high) */
     int                task_core;      /* -1 => no affinity */
+    uint16_t           gain_q8;        /* digital gain Q8 (256=1.0); default 1024 ≈ +12 dB; 0 => default */
 } i2s_capture_config_t;
 
 typedef struct i2s_capture_ctx *i2s_capture_handle_t;

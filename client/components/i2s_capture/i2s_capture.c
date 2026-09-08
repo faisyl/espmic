@@ -26,18 +26,26 @@ struct i2s_capture_ctx {
     i2s_chan_handle_t    rx;
     TaskHandle_t         task;
     volatile bool        running;
+    uint16_t             gain_q8;   /* digital gain in Q8 (1.0 = 256) */
 };
 
+/* Digital gain in Q8 fixed-point (1.0 = 256). Default +12 dB ≈ 4x = 1024. */
+#define CAP_DEFAULT_GAIN_Q8 1024
+
 /*
- * Convert one 32-bit I2S slot to the value stored in the ring. The ICS43434
- * presents its 24 valid bits MSB-justified in the 32-bit slot. We preserve the
- * 24-bit magnitude in a 32-bit signed container (spec Section 5) by an
- * arithmetic shift down by 8; the encoder boundary (opus_encoder) does the
- * final narrowing to 16-bit for Opus.
+ * Convert one 32-bit I2S slot to the value stored in the ring with
+ * configurable digital gain. The ICS43434 presents its 24 valid bits
+ * MSB-justified in the 32-bit slot. We preserve the 24-bit magnitude
+ * in a 32-bit signed container, apply digital gain with rounding, then
+ * saturate to the 24-bit range [-2^23, 2^23-1].
  */
-static inline int32_t slot_to_sample(int32_t slot)
+static inline int32_t slot_to_sample(int32_t slot, uint16_t gain_q8)
 {
-    return slot >> 8; /* arithmetic shift keeps sign; yields 24-bit range */
+    int64_t v = (int64_t)slot * (int64_t)gain_q8;
+    v = (v + 128) >> 8;        /* round then scale by Q8 gain */
+    if (v > 8388607) v = 8388607;      /* clamp to +2^23-1 */
+    if (v < -8388608) v = -8388608;    /* clamp to -2^23 */
+    return (int32_t)v;
 }
 
 static void capture_task(void *arg)
@@ -65,7 +73,7 @@ static void capture_task(void *arg)
 
         size_t n = got / sizeof(int32_t); /* interleaved L/R samples */
         for (size_t i = 0; i < n; i++) {
-            raw[i] = slot_to_sample(raw[i]);
+            raw[i] = slot_to_sample(raw[i], ctx->gain_q8);
         }
 
         /* Push under the ring lock with a bounded timeout (Jim's P2 nit): never
@@ -102,6 +110,9 @@ esp_err_t i2s_capture_start(const i2s_capture_config_t *cfg,
     if (!ctx) return ESP_ERR_NO_MEM;
     ctx->cfg = *cfg;
     if (ctx->cfg.sample_rate == 0) ctx->cfg.sample_rate = I2S_CAP_SAMPLE_RATE;
+    /* Digital gain: 0 => default (+12 dB ≈ 1024 in Q8) */
+    if (ctx->cfg.gain_q8 == 0) ctx->gain_q8 = CAP_DEFAULT_GAIN_Q8;
+    else ctx->gain_q8 = ctx->cfg.gain_q8;
 
     /* Create the RX channel (master, since the ESP32-S3 drives BCLK/WS). */
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0,
