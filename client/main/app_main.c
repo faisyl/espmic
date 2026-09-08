@@ -213,7 +213,13 @@ void app_main(void)
         .i2s_ws_gpio    = (int)s.cfg.i2s_ws_gpio,
         .i2s_din_gpio   = (int)s.cfg.i2s_din_gpio,
         .default_bitrate = s.cfg.default_bitrate,
-        .complexity     = 6,
+        /* Single-core ESP32 cannot sustain 50 fps stereo 48 kHz Opus at high
+         * complexity. Measured on-device: cx6 -> ~33 fps, cx2 -> ~44 fps
+         * (both < 50 => input dropped -> time compression). Use complexity 1
+         * (fastest usable Opus mode) + the 64 kbps cap to reach real-time.
+         * NOTE: do NOT use 0 here — 0 is the "unset -> default(5)" sentinel in
+         * audio_manager_init/opus_task_start, so it would silently become 5. */
+        .complexity     = 1,
     };
     if (audio_manager_init(&acfg) != ESP_OK) {
         go_fatal("audio_manager_init failed");

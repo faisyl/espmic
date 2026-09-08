@@ -187,6 +187,11 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
     g.stream_seq++;
 
     uint32_t bitrate = params->bitrate ? params->bitrate : g.cfg.default_bitrate;
+    /* Cap encode bitrate on the single-core ESP32 to help the encoder sustain
+     * real-time (stereo 48 kHz). 64 kbps is ample for voice and keeps the
+     * entropy-coding cost down alongside the lowered Opus complexity
+     * (app_main cx0), so the encoder holds >=50 fps. */
+    if (bitrate > 64000) bitrate = 64000;
 
     /* Start the send stage first so early packets are not dropped. */
     rtp_sender_config_t rcfg = {
