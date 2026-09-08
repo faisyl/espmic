@@ -346,10 +346,11 @@ static void send_status(const char *request_id)
     send_json(root);
 }
 
-static void send_stream_stopped(const char *stream_id)
+static void send_stream_stopped(const char *request_id, const char *stream_id)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "type", "stream_stopped");
+    if (request_id) cJSON_AddStringToObject(root, "request_id", request_id);
     if (stream_id) cJSON_AddStringToObject(root, "stream_id", stream_id);
     add_stats_block(root);
     send_json(root);
@@ -483,7 +484,7 @@ static void handle_message(const uint8_t *payload, uint32_t len)
         sid[sizeof(sid) - 1] = '\0';
         audio_manager_stop_stream();
         notify_sm(SM_EV_STOP_STREAM);
-        send_stream_stopped(sid);
+        send_stream_stopped(rid, sid);
 
     } else if (strcmp(type, "get_status") == 0) {
         send_status(rid);
