@@ -32,13 +32,25 @@ extern "C" {
 #endif
 
 /* I2S bit-clock (BCLK) GPIO — boot default. Overridden by NVS / set_config. */
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#define BOARD_I2S_BCLK_GPIO 2   /* XIAO ESP32-S3 D1 */
+#else
 #define BOARD_I2S_BCLK_GPIO 18
+#endif
 
 /* I2S word-select (WS / LRCK) GPIO — boot default. Overridden by NVS / set_config. */
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#define BOARD_I2S_WS_GPIO   3   /* XIAO ESP32-S3 D2 */
+#else
 #define BOARD_I2S_WS_GPIO   19
+#endif
 
 /* I2S serial data-in (DIN) GPIO — boot default. Overridden by NVS / set_config. */
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#define BOARD_I2S_DIN_GPIO  4   /* XIAO ESP32-S3 D3 */
+#else
 #define BOARD_I2S_DIN_GPIO  22
+#endif
 
 /* Device identity prefix — boot-default device_id is derived at runtime by
  * appending a MAC-suffix (see nvs_config.c), e.g. "esp32-a1b2c3". This is a

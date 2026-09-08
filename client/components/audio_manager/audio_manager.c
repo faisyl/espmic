@@ -187,11 +187,16 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
     g.stream_seq++;
 
     uint32_t bitrate = params->bitrate ? params->bitrate : g.cfg.default_bitrate;
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    /* EXPERIMENT (S3 dual-core): no bitrate cap — the ESP32-S3 has the CPU
+     * headroom (Opus on a dedicated core) to run full-quality stereo 48 kHz. */
+#else
     /* Cap encode bitrate on the single-core ESP32 to help the encoder sustain
      * real-time (stereo 48 kHz). 64 kbps is ample for voice and keeps the
      * entropy-coding cost down alongside the lowered Opus complexity
      * (app_main cx0), so the encoder holds >=50 fps. */
     if (bitrate > 64000) bitrate = 64000;
+#endif
 
     /* Start the send stage first so early packets are not dropped. */
     rtp_sender_config_t rcfg = {
@@ -199,7 +204,11 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
         .dest_port = params->dest_port,
         .payload_type = params->payload_type ? params->payload_type : 111,
         .ssrc_seed = (uint32_t)(0xA5A50000u ^ g.stream_seq),
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+        .task_core = 0,  /* EXPERIMENT (S3): keep RTP send on PRO_CPU (core 0) with the WiFi/TCP stack */
+#else
         .task_core = -1,
+#endif
     };
     strncpy(rcfg.dest_ip, params->dest_ip, sizeof(rcfg.dest_ip) - 1);
     err = rtp_sender_start(&rcfg, &g.rtp);
@@ -216,7 +225,11 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
         .fec = params->fec ? 1 : 0,
         .dtx = params->dtx ? 1 : 0,
         .late_counter = &g.encoder_late,
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+        .task_core = 1,  /* EXPERIMENT (S3 dual-core): dedicate APP_CPU (core 1) to the heavy Opus encode; network/capture stay on core 0 */
+#else
         .task_core = -1,
+#endif
     };
     err = opus_task_start(&ocfg, &g.opus);
     if (err != ESP_OK) { rtp_sender_stop(g.rtp); g.rtp = NULL; free_storage(); return err; }
@@ -228,7 +241,11 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
         .sample_rate = params->sample_rate,
         .ring = &g.ring, .ring_lock = g.ring_lock,
         .late_counter = &g.capture_late,
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+        .task_core = 0,  /* EXPERIMENT (S3): I2S capture on core 0; core 1 reserved for Opus */
+#else
         .task_core = -1,
+#endif
     };
     err = i2s_capture_start(&icfg, &g.i2s);
     if (err != ESP_OK) {

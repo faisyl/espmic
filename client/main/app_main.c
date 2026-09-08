@@ -219,7 +219,11 @@ void app_main(void)
          * (fastest usable Opus mode) + the 64 kbps cap to reach real-time.
          * NOTE: do NOT use 0 here — 0 is the "unset -> default(5)" sentinel in
          * audio_manager_init/opus_task_start, so it would silently become 5. */
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+        .complexity     = 5,  /* EXPERIMENT (S3 dual-core): full quality — Opus runs on its own core */
+#else
         .complexity     = 1,
+#endif
     };
     if (audio_manager_init(&acfg) != ESP_OK) {
         go_fatal("audio_manager_init failed");

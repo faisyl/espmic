@@ -72,7 +72,7 @@ firmware:
     # SDKCONFIG_DEFAULTS default is target-neutral sdkconfig.defaults; the
     # build system auto-appends sdkconfig.defaults.<target> for the chosen
     # target, so the base + per-target fragments are picked up automatically.
-    RUN bash -lc 'cd client && . $IDF_PATH/export.sh && idf.py build && mv build build-$TARGET'
+    RUN bash -lc 'cd client && . $IDF_PATH/export.sh && rm -rf build sdkconfig && idf.py -DIDF_TARGET=$TARGET build && mv build build-$TARGET'
     SAVE ARTIFACT client/build-$TARGET AS LOCAL client/build-$TARGET
 
 # ------------------------------------------------------------ firmware-all
