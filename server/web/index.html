@@ -209,6 +209,8 @@ tr:last-child td{border-bottom:none}
   /* ---- devices panel ---- */
   function renderDevices(list){
     devices=list||[];
+    // Sort by DeviceID for stable order
+    devices.sort(function(a,b){return (a.DeviceID||"").localeCompare(b.DeviceID||"");});
     var el=document.getElementById("devices-body");
     var count=document.getElementById("device-count");
     count.textContent=devices.length;
@@ -256,6 +258,8 @@ tr:last-child td{border-bottom:none}
   /* Go Stream struct emits PascalCase: StreamID, DeviceID, SSRC, State, StartedAt, Reason */
   var streamListCache = [];
   function renderStreams(){
+    // Sort by StreamID for stable order
+    streamListCache.sort(function(a,b){return (a.StreamID||"").localeCompare(b.StreamID||"");});
     var el=document.getElementById("streams-body");
     var count=document.getElementById("stream-count");
     count.textContent=streamListCache.length;
