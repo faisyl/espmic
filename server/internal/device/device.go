@@ -10,4 +10,5 @@ type Device struct {
 	Capabilities []string
 	Status       string
 	LastSeen     time.Time
+	Online       bool
 }
