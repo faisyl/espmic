@@ -56,6 +56,7 @@ func (r *Registry) Get(id string) (Device, error) {
 		return Device{}, ErrDeviceNotFound
 	}
 	d.Online = r.online[d.DeviceID] != time.Time{}
+	d.Status = statusFromOnline(d.Online)
 	return d, nil
 }
 
@@ -77,6 +78,7 @@ func (r *Registry) Authenticate(id string, credHash []byte) (Device, error) {
 		return Device{}, ErrAuthFailed
 	}
 	d.Online = r.online[d.DeviceID] != time.Time{}
+	d.Status = statusFromOnline(d.Online)
 	return d, nil
 }
 
@@ -87,9 +89,18 @@ func (r *Registry) List() []Device {
 	out := make([]Device, 0, len(r.devices))
 	for _, d := range r.devices {
 		d.Online = r.online[d.DeviceID] != time.Time{}
+		d.Status = statusFromOnline(d.Online)
 		out = append(out, d)
 	}
 	return out
+}
+
+// statusFromOnline returns the Status string for a device given its online state.
+func statusFromOnline(online bool) string {
+	if online {
+		return "online"
+	}
+	return "offline"
 }
 func (r *Registry) SetOnline(id string, t time.Time) {
 	r.mu.Lock()
