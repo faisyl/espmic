@@ -219,7 +219,7 @@ void app_main(void)
          * (fastest usable Opus mode) + the 64 kbps cap to reach real-time.
          * NOTE: do NOT use 0 here — 0 is the "unset -> default(5)" sentinel in
          * audio_manager_init/opus_task_start, so it would silently become 5. */
-        .complexity     = 1,
+        .complexity     = 1,  /* EXPERIMENT: SILK-WB at cx1 (fair vs CELT-cx1 baseline 45.6fps) */
     };
     if (audio_manager_init(&acfg) != ESP_OK) {
         go_fatal("audio_manager_init failed");

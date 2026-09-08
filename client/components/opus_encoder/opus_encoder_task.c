@@ -146,8 +146,11 @@ esp_err_t opus_task_start(const opus_task_config_t *cfg, opus_task_handle_t *out
     if (ctx->cfg.gain_q8 == 0)     ctx->cfg.gain_q8 = 1024;
 
     int err = OPUS_OK;
+    /* EXPERIMENT (exp/opus-voip-silk-wb): VOIP application forces the speech
+     * path; capping bandwidth to WIDEBAND keeps the encoder in SILK (no
+     * CELT/hybrid), which is much cheaper than AUDIO/CELT-48k on this MCU. */
     ctx->enc = opus_encoder_create(ctx->cfg.sample_rate, ctx->cfg.channels,
-                                   OPUS_APPLICATION_AUDIO, &err);
+                                   OPUS_APPLICATION_VOIP, &err);
     if (!ctx->enc || err != OPUS_OK) {
         ESP_LOGE(TAG, "opus_encoder_create: %s", opus_strerror(err));
         free(ctx);
@@ -161,7 +164,10 @@ esp_err_t opus_task_start(const opus_task_config_t *cfg, opus_task_handle_t *out
     opus_encoder_ctl(ctx->enc, OPUS_SET_INBAND_FEC(ctx->cfg.fec ? 1 : 0));
     opus_encoder_ctl(ctx->enc, OPUS_SET_DTX(ctx->cfg.dtx ? 1 : 0));
     opus_encoder_ctl(ctx->enc, OPUS_SET_COMPLEXITY(ctx->cfg.complexity));
-    opus_encoder_ctl(ctx->enc, OPUS_SET_SIGNAL(OPUS_AUTO));
+    /* EXPERIMENT: force the SILK speech path (cheap) — voice signal + cap the
+     * audio bandwidth to wideband (16 kHz) so the encoder never engages CELT. */
+    opus_encoder_ctl(ctx->enc, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
+    opus_encoder_ctl(ctx->enc, OPUS_SET_MAX_BANDWIDTH(OPUS_BANDWIDTH_WIDEBAND));
 
     ctx->running = true;
     int prio = ctx->cfg.task_priority > 0 ? ctx->cfg.task_priority
