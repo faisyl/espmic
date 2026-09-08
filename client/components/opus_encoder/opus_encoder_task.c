@@ -91,9 +91,15 @@ static void opus_task(void *arg)
         }
 
         /* Narrow the 24-bit-in-int32 samples to the int16 libopus expects
-         * (encoder boundary conversion, spec Sections 5/7). */
+         * with configurable digital gain. Combine the /256 reduction and
+         * gain into one wide-int op: v = frame * gain_q8 >> 16.
+         * gain_q8=256 => v = frame>>8 (unity, old correct behavior).
+         * gain_q8=1024 => v = frame/64 (4x louder = +12 dB). */
         for (int i = 0; i < OPUS_FRAME_SAMPLES; i++) {
-            pcm16[i] = (opus_int16)(frame[i] >> 8); /* 24-bit -> 16-bit */
+            int64_t v = ((int64_t)frame[i] * ctx->cfg.gain_q8 + (1 << 15)) >> 16;
+            if (v > 32767) v = 32767;
+            if (v < -32768) v = -32768;
+            pcm16[i] = (opus_int16)v;
         }
 
         int n = opus_encode(ctx->enc, pcm16, OPUS_FRAME_SAMPLES_PER_CH,
@@ -137,6 +143,7 @@ esp_err_t opus_task_start(const opus_task_config_t *cfg, opus_task_handle_t *out
     if (ctx->cfg.channels == 0)    ctx->cfg.channels = OPUS_FRAME_CHANNELS;
     if (ctx->cfg.bitrate == 0)     ctx->cfg.bitrate = 128000;
     if (ctx->cfg.complexity == 0)  ctx->cfg.complexity = 5;
+    if (ctx->cfg.gain_q8 == 0)     ctx->cfg.gain_q8 = 1024;
 
     int err = OPUS_OK;
     ctx->enc = opus_encoder_create(ctx->cfg.sample_rate, ctx->cfg.channels,
