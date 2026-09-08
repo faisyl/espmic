@@ -47,7 +47,7 @@ func (r *Registry) Register(d Device, credHash []byte) {
 	r.creds[d.DeviceID] = credHash
 }
 
-// Get returns the device record for id.
+// Get returns the device record for id with its online status.
 func (r *Registry) Get(id string) (Device, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -55,12 +55,13 @@ func (r *Registry) Get(id string) (Device, error) {
 	if !ok {
 		return Device{}, ErrDeviceNotFound
 	}
+	d.Online = r.online[d.DeviceID] != time.Time{}
 	return d, nil
 }
 
 // Authenticate validates the presented credential hash against the stored one
 // using constant-time comparison (spec §19: authenticate before accepting
-// commands). Returns the device on success.
+// commands). Returns the device on success with online status.
 func (r *Registry) Authenticate(id string, credHash []byte) (Device, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -75,15 +76,17 @@ func (r *Registry) Authenticate(id string, credHash []byte) (Device, error) {
 	if subtle.ConstantTimeCompare(want, credHash) != 1 {
 		return Device{}, ErrAuthFailed
 	}
+	d.Online = r.online[d.DeviceID] != time.Time{}
 	return d, nil
 }
 
-// List returns all registered devices.
+// List returns all registered devices with their online status.
 func (r *Registry) List() []Device {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]Device, 0, len(r.devices))
 	for _, d := range r.devices {
+		d.Online = r.online[d.DeviceID] != time.Time{}
 		out = append(out, d)
 	}
 	return out

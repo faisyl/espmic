@@ -439,6 +439,70 @@ func TestOnDeviceDisconnectFailsActiveStreams(t *testing.T) {
 	}
 }
 
+// TestOnDeviceDisconnectMarksDeviceOffline verifies that when a device
+// disconnects, it is marked offline in the registry and API.
+func TestOnDeviceDisconnectMarksDeviceOffline(t *testing.T) {
+	cfg := config.Load()
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Register a device (simulating TOFU enrollment)
+	d := device.Device{
+		DeviceID:    "test-device-offline",
+		DisplayName: "Test Device",
+		Status:      "online",
+	}
+	srv.device.Register(d, nil)
+	// Manually set it online (as would happen after successful auth)
+	srv.device.SetOnline("test-device-offline", time.Now())
+
+	// Verify device shows online before disconnect
+	devices := srv.DeviceList()
+	var foundBefore bool
+	for _, dev := range devices.([]device.Device) {
+		if dev.DeviceID == "test-device-offline" {
+			if !dev.Online {
+				t.Fatalf("expected device online before disconnect")
+			}
+			foundBefore = true
+			break
+		}
+	}
+	if !foundBefore {
+		t.Fatalf("device not found in list before disconnect")
+	}
+
+	// Simulate device disconnect via OnDeviceDisconnect
+	srv.OnDeviceDisconnect("test-device-offline")
+
+	// Verify device shows offline after disconnect
+	devices = srv.DeviceList()
+	var foundAfter bool
+	for _, dev := range devices.([]device.Device) {
+		if dev.DeviceID == "test-device-offline" {
+			if dev.Online {
+				t.Fatalf("expected device offline after disconnect, got online=true")
+			}
+			foundAfter = true
+			break
+		}
+	}
+	if !foundAfter {
+		t.Fatalf("device not found in list after disconnect")
+	}
+
+	// Also verify DeviceGet returns offline status
+	dev, err := srv.DeviceGet("test-device-offline")
+	if err != nil {
+		t.Fatalf("DeviceGet failed: %v", err)
+	}
+	if dev.Online {
+		t.Fatalf("DeviceGet expected offline, got online=true")
+	}
+}
+
 // TestCleanupStreamByIDIdempotent verifies cleanupStreamByID is idempotent
 // and safe to call twice (e.g., monitor + disconnect race).
 func TestCleanupStreamByIDIdempotent(t *testing.T) {
