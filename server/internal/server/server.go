@@ -271,7 +271,11 @@ func (s *Server) Authenticate(ctx context.Context, deviceID, credential string) 
 		s.device.Register(d, nil)
 		_ = s.repos.Devices.Save(d, nil)
 		log.Printf("control: enrolled new device %q (TOFU)", deviceID)
+		s.device.SetOnline(deviceID, time.Now())
 		return nil
+	}
+	if err == nil {
+		s.device.SetOnline(deviceID, time.Now())
 	}
 	return err
 }
