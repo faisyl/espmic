@@ -204,11 +204,11 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
         .dest_port = params->dest_port,
         .payload_type = params->payload_type ? params->payload_type : 111,
         .ssrc_seed = (uint32_t)(0xA5A50000u ^ g.stream_seq),
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-        .task_core = 0,  /* EXPERIMENT (S3): keep RTP send on PRO_CPU (core 0) with the WiFi/TCP stack */
-#else
-        .task_core = -1,
-#endif
+        /* RTP send on PRO_CPU (core 0) with the WiFi/TCP stack. Both the
+         * dual-core ESP32 (LX6) and ESP32-S3 (LX7) benefit from pinning:
+         * measured on hardware, pinning lifts the WROOM-32 from ~46 -> ~50 fps
+         * at cx1, and lets the S3 hold 50 fps at cx5. */
+        .task_core = 0,
     };
     strncpy(rcfg.dest_ip, params->dest_ip, sizeof(rcfg.dest_ip) - 1);
     err = rtp_sender_start(&rcfg, &g.rtp);
@@ -225,11 +225,9 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
         .fec = params->fec ? 1 : 0,
         .dtx = params->dtx ? 1 : 0,
         .late_counter = &g.encoder_late,
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-        .task_core = 1,  /* EXPERIMENT (S3 dual-core): dedicate APP_CPU (core 1) to the heavy Opus encode; network/capture stay on core 0 */
-#else
-        .task_core = -1,
-#endif
+        /* Dedicate APP_CPU (core 1) to the heavy Opus encode; network/capture
+         * stay on core 0. Applies to both dual-core targets (see rtp above). */
+        .task_core = 1,
     };
     err = opus_task_start(&ocfg, &g.opus);
     if (err != ESP_OK) { rtp_sender_stop(g.rtp); g.rtp = NULL; free_storage(); return err; }
@@ -241,11 +239,8 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
         .sample_rate = params->sample_rate,
         .ring = &g.ring, .ring_lock = g.ring_lock,
         .late_counter = &g.capture_late,
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-        .task_core = 0,  /* EXPERIMENT (S3): I2S capture on core 0; core 1 reserved for Opus */
-#else
-        .task_core = -1,
-#endif
+        /* I2S capture on core 0; core 1 reserved for Opus. Both targets. */
+        .task_core = 0,
     };
     err = i2s_capture_start(&icfg, &g.i2s);
     if (err != ESP_OK) {
