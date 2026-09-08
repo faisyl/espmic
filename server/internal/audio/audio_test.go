@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"encoding/binary"
 	"os"
 	"sync"
 	"testing"
@@ -280,3 +281,74 @@ func containsOpusTags(data []byte) bool {
 func t0() time.Time { return time.Unix(1_000_000, 0).UTC() }
 
 const timeSecond = 1000000000
+
+// oggDataPageGranuleposes walks every Ogg page and returns the granulepos of
+// the audio data pages — i.e. those after the OpusHead (BOS) and OpusTags
+// pages, which by convention carry granulepos 0.
+func oggDataPageGranuleposes(t *testing.T, data []byte) []int64 {
+	t.Helper()
+	var gps []int64
+	off, page := 0, 0
+	for off < len(data) {
+		if off+27 > len(data) || string(data[off:off+4]) != "OggS" {
+			t.Fatalf("page %d: bad/absent OggS sync at offset %d", page, off)
+		}
+		gp := int64(binary.LittleEndian.Uint64(data[off+6 : off+14]))
+		nseg := int(data[off+26])
+		if off+27+nseg > len(data) {
+			t.Fatalf("page %d: truncated segment table", page)
+		}
+		dataLen := 0
+		for i := 0; i < nseg; i++ {
+			dataLen += int(data[off+27+i])
+		}
+		// page 0 = OpusHead, page 1 = OpusTags; the rest are audio data pages,
+		// except the trailing EOS page (header type bit 0x04) which repeats the
+		// final granulepos and carries no packet.
+		isEOS := data[off+5]&0x04 != 0
+		if page >= 2 && !isEOS {
+			gps = append(gps, gp)
+		}
+		off += 27 + nseg + dataLen
+		page++
+	}
+	return gps
+}
+
+// TestOpusRecorderDropsWarmupAndGranulepos verifies the blip fix: the first
+// warmupSkip packets are dropped from the .opus file, and the granulepos of the
+// written data pages follows RFC 7845 (first = pre-skip, then +rate/50 per 20ms
+// frame). This is what removes the audible startup blip from every recording.
+func TestOpusRecorderDropsWarmupAndGranulepos(t *testing.T) {
+	dir := t.TempDir()
+	const preskip = 312
+	rec, err := NewOpusRecorder(dir, "blip", 48000, 2, preskip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const total = 6
+	for i := 0; i < total; i++ {
+		rec.WritePacket(uint32(i*960), []byte{byte(i), byte(i)})
+	}
+	uri, _, err := rec.Finalize(t0().Add(timeSecond))
+	if err != nil {
+		t.Fatalf("Finalize: %v", err)
+	}
+	data, err := os.ReadFile(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gps := oggDataPageGranuleposes(t, data)
+
+	wantWritten := total - warmupSkip
+	if len(gps) != wantWritten {
+		t.Fatalf("data pages = %d, want %d (dropped %d warm-up frames)", len(gps), wantWritten, warmupSkip)
+	}
+	frame := int64(48000 / 50) // 960 samples per 20ms frame @ 48kHz
+	for i, gp := range gps {
+		want := int64(preskip) + int64(i)*frame
+		if gp != want {
+			t.Fatalf("data page %d granulepos = %d, want %d", i, gp, want)
+		}
+	}
+}

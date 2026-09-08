@@ -34,8 +34,14 @@ type OpusRecorder struct {
 	preskip  uint16
 	channels int
 	rate     int
-	startTS  uint32
 	prevGP   int64
+
+	// seen counts every packet the writer has processed; written counts only
+	// those actually muxed to disk. The first warmupSkip packets are dropped
+	// (see writePageForPacket) so the client's capture startup transient — the
+	// audible blip at the very start of every recording — never reaches the file.
+	seen    int64
+	written int64
 
 	mu        sync.Mutex
 	f         *os.File
@@ -85,19 +91,38 @@ func (r *OpusRecorder) writer() {
 	}
 }
 
+// warmupSkip is the number of leading Opus packets dropped from every
+// recording. The device's I2S capture emits a startup transient (DC settle /
+// stale ring buffer) in its first frames, which the encoder faithfully encodes
+// as an audible pop at the head of the file. Dropping the first two 20 ms frames
+// (~40 ms) removes that blip while losing a negligible amount of real audio.
+const warmupSkip = 2
+
 // writePageForPacket writes a single Ogg page for the given Opus packet.
+//
+// The first warmupSkip packets are discarded outright. For every packet that is
+// actually written, granulepos follows RFC 7845 §3: the first data page carries
+// granulepos = pre-skip, and each subsequent 20 ms frame adds one frame's worth
+// of 48 kHz samples (rate/50, i.e. 960 at 48 kHz). Counting frames rather than
+// deriving granulepos from RTP timestamps keeps the sequence exact and immune to
+// timestamp jitter or the discontinuity created by dropping the warm-up frames.
 func (r *OpusRecorder) writePageForPacket(pkt *opusPacket) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed {
-		return
+	// No early-return on r.closed here: Finalize sets closed=true before it
+	// closes the channel and waits (<-r.done) for this writer to drain, and the
+	// file stays open until that wait returns. Bailing out on closed would
+	// silently drop every packet still buffered at finalize time.
+	r.seen++
+	if r.seen <= warmupSkip {
+		return // drop the capture startup transient (the opening blip)
 	}
-	if r.startTS == 0 {
-		r.startTS = pkt.ts
-	}
-	gp := int64(pkt.ts) - int64(r.startTS) - int64(r.preskip)
-	if gp < 0 {
-		gp = 0
+	r.written++
+	var gp int64
+	if r.written == 1 {
+		gp = int64(r.preskip)
+	} else {
+		gp = r.prevGP + int64(r.rate/50)
 	}
 	r.prevGP = gp
 	r.writePage(gp, pkt.payload)
