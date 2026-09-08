@@ -439,76 +439,81 @@ func TestOnDeviceDisconnectFailsActiveStreams(t *testing.T) {
 	}
 }
 
-// TestOnDeviceDisconnectMarksDeviceOffline verifies that when a device
-// disconnects, it is marked offline in the registry and API.
-func TestOnDeviceDisconnectMarksDeviceOffline(t *testing.T) {
+// TestDeviceOnlineStatusLifecycle verifies the full connect/disconnect cycle:
+// a device is marked online/Status="online" after Authenticate (both TOFU and
+// existing-device paths), then flips to offline/Status="offline" after
+// OnDeviceDisconnect.
+func TestDeviceOnlineStatusLifecycle(t *testing.T) {
 	cfg := config.Load()
 	srv, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Register a device (simulating TOFU enrollment)
-	d := device.Device{
-		DeviceID:    "test-device-offline",
-		DisplayName: "Test Device",
-		Status:      "online",
-	}
-	srv.device.Register(d, nil)
-	// Manually set it online (as would happen after successful auth)
-	srv.device.SetOnline("test-device-offline", time.Now())
-
-	// Verify device shows online before disconnect
-	devices := srv.DeviceList()
-	var foundBefore bool
-	for _, dev := range devices.([]device.Device) {
-		if dev.DeviceID == "test-device-offline" {
-			if !dev.Online {
-				t.Fatalf("expected device online before disconnect")
-			}
-			if dev.Status != "online" {
-				t.Fatalf("expected device status=online before disconnect, got %q", dev.Status)
-			}
-			foundBefore = true
-			break
-		}
-	}
-	if !foundBefore {
-		t.Fatalf("device not found in list before disconnect")
-	}
-
-	// Simulate device disconnect via OnDeviceDisconnect
-	srv.OnDeviceDisconnect("test-device-offline")
-
-	// Verify device shows offline after disconnect
-	devices = srv.DeviceList()
-	var foundAfter bool
-	for _, dev := range devices.([]device.Device) {
-		if dev.DeviceID == "test-device-offline" {
-			if dev.Online {
-				t.Fatalf("expected device offline after disconnect, got online=true")
-			}
-			if dev.Status != "offline" {
-				t.Fatalf("expected device status=offline after disconnect, got %q", dev.Status)
-			}
-			foundAfter = true
-			break
-		}
-	}
-	if !foundAfter {
-		t.Fatalf("device not found in list after disconnect")
-	}
-
-	// Also verify DeviceGet returns offline status
-	dev, err := srv.DeviceGet("test-device-offline")
+	// --- TOFU path: Authenticate enrolls a new device and marks it online ---
+	err = srv.Authenticate(context.Background(), "test-device-tofu", "")
 	if err != nil {
-		t.Fatalf("DeviceGet failed: %v", err)
+		t.Fatalf("Authenticate (TOFU) failed: %v", err)
+	}
+
+	dev, err := srv.DeviceGet("test-device-tofu")
+	if err != nil {
+		t.Fatalf("DeviceGet (TOFU) failed: %v", err)
+	}
+	if !dev.Online {
+		t.Fatalf("TOFU: expected device online after Authenticate, got online=false")
+	}
+	if dev.Status != "online" {
+		t.Fatalf("TOFU: expected device status=online after Authenticate, got %q", dev.Status)
+	}
+
+	// Disconnect → offline
+	srv.OnDeviceDisconnect("test-device-tofu")
+	dev, err = srv.DeviceGet("test-device-tofu")
+	if err != nil {
+		t.Fatalf("DeviceGet (TOFU after disconnect) failed: %v", err)
 	}
 	if dev.Online {
-		t.Fatalf("DeviceGet expected offline, got online=true")
+		t.Fatalf("TOFU: expected device offline after disconnect, got online=true")
 	}
 	if dev.Status != "offline" {
-		t.Fatalf("DeviceGet expected status=offline, got %q", dev.Status)
+		t.Fatalf("TOFU: expected device status=offline after disconnect, got %q", dev.Status)
+	}
+
+	// --- Existing-device path: Authenticate marks an already-registered device online ---
+	d := device.Device{
+		DeviceID:    "test-device-existing",
+		DisplayName: "Existing Device",
+	}
+	srv.device.Register(d, nil)
+
+	err = srv.Authenticate(context.Background(), "test-device-existing", "")
+	if err != nil {
+		t.Fatalf("Authenticate (existing) failed: %v", err)
+	}
+
+	dev, err = srv.DeviceGet("test-device-existing")
+	if err != nil {
+		t.Fatalf("DeviceGet (existing) failed: %v", err)
+	}
+	if !dev.Online {
+		t.Fatalf("existing: expected device online after Authenticate, got online=false")
+	}
+	if dev.Status != "online" {
+		t.Fatalf("existing: expected device status=online after Authenticate, got %q", dev.Status)
+	}
+
+	// Disconnect → offline
+	srv.OnDeviceDisconnect("test-device-existing")
+	dev, err = srv.DeviceGet("test-device-existing")
+	if err != nil {
+		t.Fatalf("DeviceGet (existing after disconnect) failed: %v", err)
+	}
+	if dev.Online {
+		t.Fatalf("existing: expected device offline after disconnect, got online=true")
+	}
+	if dev.Status != "offline" {
+		t.Fatalf("existing: expected device status=offline after disconnect, got %q", dev.Status)
 	}
 }
 

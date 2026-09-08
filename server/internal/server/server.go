@@ -267,13 +267,17 @@ func (s *Server) Authenticate(ctx context.Context, deviceID, credential string) 
 			DisplayName: deviceID,
 			Status:      "online",
 		}
-		// Persist TOFU enrollment (spec §20 GAP-15).
-		s.device.Register(d, nil)
-		_ = s.repos.Devices.Save(d, nil)
-		log.Printf("control: enrolled new device %q (TOFU)", deviceID)
-		return nil
-	}
-	return err
+	// Persist TOFU enrollment (spec §20 GAP-15).
+	s.device.Register(d, nil)
+	_ = s.repos.Devices.Save(d, nil)
+	log.Printf("control: enrolled new device %q (TOFU)", deviceID)
+	s.device.SetOnline(deviceID, time.Now())
+	return nil
+}
+if err == nil {
+	s.device.SetOnline(deviceID, time.Now())
+}
+return err
 }
 
 // MetricsSurface returns the metrics snapshot for the HTTP endpoint (§18).
