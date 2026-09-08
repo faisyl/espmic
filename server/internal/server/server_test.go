@@ -466,6 +466,9 @@ func TestOnDeviceDisconnectMarksDeviceOffline(t *testing.T) {
 			if !dev.Online {
 				t.Fatalf("expected device online before disconnect")
 			}
+			if dev.Status != "online" {
+				t.Fatalf("expected device status=online before disconnect, got %q", dev.Status)
+			}
 			foundBefore = true
 			break
 		}
@@ -485,6 +488,9 @@ func TestOnDeviceDisconnectMarksDeviceOffline(t *testing.T) {
 			if dev.Online {
 				t.Fatalf("expected device offline after disconnect, got online=true")
 			}
+			if dev.Status != "offline" {
+				t.Fatalf("expected device status=offline after disconnect, got %q", dev.Status)
+			}
 			foundAfter = true
 			break
 		}
@@ -500,6 +506,9 @@ func TestOnDeviceDisconnectMarksDeviceOffline(t *testing.T) {
 	}
 	if dev.Online {
 		t.Fatalf("DeviceGet expected offline, got online=true")
+	}
+	if dev.Status != "offline" {
+		t.Fatalf("DeviceGet expected status=offline, got %q", dev.Status)
 	}
 }
 
