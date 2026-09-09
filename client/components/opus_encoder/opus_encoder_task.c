@@ -145,20 +145,12 @@ static void opus_task(void *arg)
          * Both are applied as v = frame * g >> 16, where g=256 is unity 24->16. */
         int32_t g;
         if (ctx->cfg.agc) {
-            /* Peak of this 24-bit-in-int32 frame (both channels). Also track
-             * sum/min/max to expose any DC offset in the debug log (a large
-             * non-zero mean means the mic pipeline needs DC blocking). */
-            int32_t peak = 1, fmin = frame[0], fmax = frame[0];
-            int64_t sum = 0;
+            /* Peak of this (DC-blocked) 24-bit-in-int32 frame, both channels. */
+            int32_t peak = 1;
             for (int i = 0; i < OPUS_FRAME_SAMPLES; i++) {
-                int32_t s = frame[i];
-                int32_t a = s < 0 ? -s : s;
+                int32_t a = frame[i] < 0 ? -frame[i] : frame[i];
                 if (a > peak) peak = a;
-                if (s < fmin) fmin = s;
-                if (s > fmax) fmax = s;
-                sum += s;
             }
-            int32_t mean = (int32_t)(sum / OPUS_FRAME_SAMPLES);
             /* Gain that would bring this peak to the target: peak*g>>16 = target. */
             int32_t desired = (int32_t)(((int64_t)AGC_TARGET_PEAK << 16) / peak);
             if (desired > AGC_G_MAX) desired = AGC_G_MAX;
@@ -172,10 +164,9 @@ static void opus_task(void *arg)
             if (ctx->agc_g > AGC_G_MAX) ctx->agc_g = AGC_G_MAX;
             g = ctx->agc_g;
 
-            if ((dbg_n % 50u) == 0u) {
-                ESP_LOGI(TAG, "agc: peak=%d gain=%d mean=%d min=%d max=%d ac=%d",
-                         (int)peak, (int)g, (int)mean, (int)fmin, (int)fmax,
-                         (int)(fmax - fmin));
+            if ((dbg_n % 250u) == 0u) {  /* ~ every 5 s: level/gain for field diag */
+                ESP_LOGD(TAG, "agc: peak=%d gain=%d (x%d.%02d)", (int)peak, (int)g,
+                         (int)(g / 256), (int)((g % 256) * 100 / 256));
             }
         } else {
             g = ctx->cfg.gain_q8;
