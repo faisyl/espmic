@@ -45,15 +45,33 @@ func NewLiveOutput(ctx context.Context, w http.ResponseWriter, r *http.Request, 
 	}
 	bus.Subscribe(l)
 	go l.writeLoop(ctx)
+	go l.readPump()
 	return l, nil
+}
+
+// readPump reads (and discards) inbound WebSocket frames until the client
+// disconnects, then cancels the output. Its real job is lifecycle: gorilla only
+// surfaces a client close via a failed read, so without this a dead client's
+// LiveOutput would stay subscribed forever. It also anchors the connection's
+// lifetime to the socket rather than the HTTP handler.
+func (l *LiveOutput) readPump() {
+	for {
+		if _, _, err := l.ws.ReadMessage(); err != nil {
+			l.cancel()
+			return
+		}
+	}
 }
 
 // HandleLive returns an http.HandlerFunc that upgrades to WebSocket and streams
 // decoded PCM from the bus (spec §14, GET /api/live).
 func HandleLive(bus *PCMBus) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		_, err := NewLiveOutput(r.Context(), w, r, bus)
-		if err != nil {
+		// Do NOT tie the WebSocket lifetime to r.Context(): net/http cancels it
+		// the instant this handler returns (right after the upgrade), which would
+		// tear the socket down before any PCM is sent. Use a standalone context;
+		// teardown is driven by the socket (readPump) and write errors instead.
+		if _, err := NewLiveOutput(context.Background(), w, r, bus); err != nil {
 			log.Printf("live: %v", err)
 			return
 		}
