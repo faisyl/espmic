@@ -157,6 +157,9 @@ tr:last-child td{border-bottom:none}
             <svg viewBox="0 0 24 24" aria-hidden="true" style="width:14px;height:14px"><path d="M8 5v14l11-7z"/></svg>
             <span id="listen-label">Listen</span>
           </button>
+          <select id="output-device" aria-label="Audio output device" style="width:100%;padding:.25rem;font:inherit">
+            <option value="">System default</option>
+          </select>
           <div style="display:flex;align-items:center;gap:.5rem;width:100%">
             <button class="btn" id="mute-btn" aria-label="Mute" aria-pressed="false" style="flex:0 0 auto">
               <svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
@@ -390,6 +393,7 @@ tr:last-child td{border-bottom:none}
   var audioGain=null;
   var audioMuted=false;
   var audioVolume=0.8;
+  var audioSinkId=localStorage.getItem("espmic-output-device")||"";
   var playbackRing=null;
   var RING_CAPACITY=8192; // ~170ms at 48kHz stereo
   var RING_WRITE_IDX=0;
@@ -415,7 +419,6 @@ tr:last-child td{border-bottom:none}
     "      this.buffer[this.writeIdx]=f32[i];"+
     "      this.writeIdx=(this.writeIdx+1)%this.buffer.length;"+
     "    }"+
-    "    // Drop excess if buffer full (overrun)"
     "  }"+
     "  process(inputs,outputs,params){"+
     "    var outL=outputs[0][0];"+
@@ -442,6 +445,10 @@ tr:last-child td{border-bottom:none}
     audioGain=audioCtx.createGain();
     audioGain.gain.value=audioVolume;
     audioGain.connect(audioCtx.destination);
+    // Apply saved sink (if setSinkId available)
+    if(audioSinkId&&audioCtx.setSinkId){
+      audioCtx.setSinkId(audioSinkId).catch(function(){});
+    }
     // Create worklet from blob
     var blob=new Blob([workletCode],{type:"application/javascript"});
     var url=URL.createObjectURL(blob);
@@ -528,6 +535,41 @@ tr:last-child td{border-bottom:none}
     ws.onerror=function(){
       ws.close();
     };
+  }
+
+  /* ---- output device picker ---- */
+  var outputSelect=document.getElementById("output-device");
+  var setSinkIdSupported=!!(audioCtx&&audioCtx.setSinkId);
+
+  function populateOutputDevices(){
+    if(!setSinkIdSupported) return;
+    navigator.mediaDevices.enumerateDevices().then(function(devs){
+      var cur=outputSelect.value;
+      outputSelect.innerHTML='<option value="">System default</option>';
+      devs.filter(function(d){return d.kind==="audiooutput"}).forEach(function(d){
+        var opt=document.createElement("option");
+        opt.value=d.deviceId;
+        opt.textContent=d.label||("Device "+d.deviceId.slice(0,8));
+        outputSelect.appendChild(opt);
+      });
+      outputSelect.value=cur||audioSinkId||"";
+    }).catch(function(){});
+  }
+
+  outputSelect.addEventListener("change",function(e){
+    audioSinkId=e.target.value;
+    try{localStorage.setItem("espmic-output-device",audioSinkId)}catch(x){}
+    if(audioCtx&&audioCtx.setSinkId){
+      audioCtx.setSinkId(audioSinkId||"").catch(function(){});
+    }
+  });
+
+  if(setSinkIdSupported){
+    populateOutputDevices();
+    navigator.mediaDevices.addEventListener("devicechange",populateOutputDevices);
+  } else {
+    outputSelect.disabled=true;
+    outputSelect.title="Audio output picker not supported in this browser";
   }
 
   /* ---- polling ---- */
