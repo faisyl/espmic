@@ -32,6 +32,9 @@ static const char *TAG = "control";
 #define RECONNECT_MAX_MS   16000
 #define READ_TIMEOUT_MS    5000     /* bounded read; drives keepalive ping */
 #define KEEPALIVE_IDLE_MS  15000    /* send a device ping after this idle time */
+#define CONTROL_DEAD_MS    45000    /* no data from server this long => link dead, reconnect.
+                                     * Server heartbeats every 30 s and answers our pings, so a
+                                     * healthy link always has RX well inside this window. */
 #define CONTROL_LOSS_GRACE_MS 3000  /* stop an active stream after loss (spec 14) */
 
 /* ---- connection abstraction (TLS via esp-tls, or plain TCP) --------------- */
@@ -272,11 +275,11 @@ static void send_pong(void)
     send_json(root);
 }
 
-static void send_ping(void)
+static esp_err_t send_ping(void)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "type", "ping");
-    send_json(root);
+    return send_json(root); /* propagate write failure so a dead link is detected */
 }
 
 static void send_error(const char *request_id, const char *code, const char *msg)
@@ -555,7 +558,8 @@ static void on_frame(const uint8_t *payload, uint32_t len, void *user)
 static void run_session(void)
 {
     uint8_t rxbuf[1024];
-    TickType_t last_rx = xTaskGetTickCount();
+    TickType_t last_rx = xTaskGetTickCount();   /* last time we RECEIVED bytes */
+    TickType_t last_ping = xTaskGetTickCount(); /* last keepalive ping we SENT */
 
     /* Watchdog-subscribe only for the connected phase (spec Section 14). The
      * blocking connect (conn_open) happens outside this function so its up-to
@@ -574,11 +578,27 @@ static void run_session(void)
             break;
         }
         if (r == 0) {
-            /* Idle: send a keepalive ping if silent too long. */
-            if ((xTaskGetTickCount() - last_rx) >
-                pdMS_TO_TICKS(KEEPALIVE_IDLE_MS)) {
-                send_ping();
-                last_rx = xTaskGetTickCount();
+            TickType_t now = xTaskGetTickCount();
+            /* Dead-link detection: a healthy server heartbeats every 30 s and
+             * answers our pings, so we always receive *something* well inside
+             * CONTROL_DEAD_MS. If we haven't, the link is half-open (e.g. the
+             * server closed but our read never errored) — drop it and let the
+             * outer loop reconnect. Without this the task would loop forever on
+             * read timeouts, pinging a dead socket, and never recover. */
+            if ((now - last_rx) > pdMS_TO_TICKS(CONTROL_DEAD_MS)) {
+                ESP_LOGW(TAG, "no data from server for %d ms; link dead, reconnecting",
+                         CONTROL_DEAD_MS);
+                break;
+            }
+            /* Keepalive: ping if the link has been silent a while. A failed
+             * write means the socket is gone — reconnect immediately. */
+            if ((now - last_rx) > pdMS_TO_TICKS(KEEPALIVE_IDLE_MS) &&
+                (now - last_ping) > pdMS_TO_TICKS(KEEPALIVE_IDLE_MS)) {
+                if (send_ping() != ESP_OK) {
+                    ESP_LOGW(TAG, "keepalive ping write failed; reconnecting");
+                    break;
+                }
+                last_ping = now;
             }
             continue;
         }
