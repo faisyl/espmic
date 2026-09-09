@@ -17,7 +17,10 @@ type Authenticator interface {
 	Authenticate(ctx context.Context, deviceID, credential string) error
 }
 
-// Session implements the server side of a device control connection
+// controlLivenessTimeout is the rolling read deadline applied to the control
+// connection after handshake. It must exceed the heartbeat interval (30s) and
+// match the client dead-link detector (CONTROL_DEAD_MS=45000, commit d9ea42a).
+var controlLivenessTimeout = 45 * time.Second
 // (spec §7). It runs over any net.Conn so tests can use a fake. The server
 // flow (spec §7) is driven by Run:
 //
@@ -115,7 +118,9 @@ func (s *Session) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("control: read hello: %w", err)
 	}
-	s.conn.SetReadDeadline(time.Time{})
+	// Switch to rolling liveness deadline so a half-open peer is detected
+	// (the control conn otherwise blocks in ReadMessage forever).
+	s.conn.SetReadDeadline(s.now().Add(controlLivenessTimeout))
 
 	msg, err := DecodePayload(payload)
 	if err != nil {
@@ -182,6 +187,7 @@ func (s *Session) readLoop(ctx context.Context, errCh chan<- error) {
 			return
 		default:
 		}
+		s.conn.SetReadDeadline(s.now().Add(controlLivenessTimeout))
 		payload, err := s.readFrame()
 		if err != nil {
 			errCh <- err

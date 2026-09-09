@@ -994,3 +994,46 @@ func TestStartStreamDestinationOverride(t *testing.T) {
 		t.Fatal("StartStream did not complete")
 	}
 }
+
+// TestRestoreForcesDeviceOffline verifies that a device persisted with
+// Status="online" is restored as "offline" (no live session post-restart).
+func TestRestoreForcesDeviceOffline(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := persistence.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	repos := persistence.NewRepos(db)
+
+	// Seed device persisted as "online" (as it would be at runtime).
+	dev := device.Device{DeviceID: "esp32-online", DisplayName: "esp32-online", Status: "online"}
+	if err := repos.Devices.Save(dev, []byte{}); err != nil {
+		t.Fatal("seed device:", err)
+	}
+
+	cfg := config.Load()
+	cfg.DBPath = dbPath
+	cfg.ControlAddr = "localhost:0"
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	if err := srv.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	// Device is present but offline (no live session).
+	got, err := srv.device.Get(dev.DeviceID)
+	if err != nil {
+		t.Fatalf("device not in registry: %v", err)
+	}
+	if got.Status != "offline" {
+		t.Fatalf("device Status = %q, want offline", got.Status)
+	}
+	if got.Online {
+		t.Fatal("device Online = true, want false (no live session)")
+	}
+}

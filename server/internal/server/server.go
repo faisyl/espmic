@@ -117,6 +117,9 @@ func (s *Server) Restore() error {
 		return fmt.Errorf("load devices: %w", err)
 	}
 	for _, rec := range devices {
+		// Force presence to offline: a persisted device is only online once a
+		// live session authenticates post-restart (B1 fix).
+		rec.Device.Status = "offline"
 		s.device.Register(rec.Device, rec.CredHash)
 		slog.Info("restore: loaded device", "device_id", rec.Device.DeviceID, "status", rec.Device.Status)
 	}

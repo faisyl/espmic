@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -326,5 +327,95 @@ func TestSessionManagerUnregisterIfStaleVsCurrent(t *testing.T) {
 	}
 	if m.IsConnected("d1") {
 		t.Fatal("d1 should be gone after current session ends")
+	}
+}
+
+// TestSessionLivenessTimeout verifies that after handshake, the session applies
+// a rolling read deadline and that a silent peer (no messages within the timeout)
+// causes the session to exit with a timeout error.
+func TestSessionLivenessTimeout(t *testing.T) {
+	// Use a real TCP conn pair so deadlines are enforced.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	serverConnCh := make(chan net.Conn, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		serverConnCh <- conn
+	}()
+
+	clientConn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+
+	serverConn := <-serverConnCh
+	defer serverConn.Close()
+
+	// Shorten the timeout for the test.
+	origTimeout := controlLivenessTimeout
+	controlLivenessTimeout = 200 * time.Millisecond
+	defer func() { controlLivenessTimeout = origTimeout }()
+
+	s := NewSession(serverConn, &fakeAuth{ok: true}, func() time.Time { return time.Now() }, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+
+	// Send hello from client.
+	hello := NewHello("d1", "token", "1.0", nil)
+	b, _ := Encode(hello)
+	var buf bytes.Buffer
+	WriteFrame(&buf, b)
+	clientConn.Write(buf.Bytes())
+
+	// Read hello_ack from the client side (server writes to serverConn → client reads from clientConn).
+	fr := &FrameReader{}
+	readBuf := make([]byte, 1024)
+	var ackMsg Message
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		clientConn.SetReadDeadline(time.Now().Add(time.Second))
+		n, err := clientConn.Read(readBuf)
+		if err != nil {
+			t.Fatalf("read hello_ack: %v", err)
+		}
+		frames, _, ferr := fr.Push(readBuf[:n])
+		if ferr != nil {
+			t.Fatalf("frame push: %v", ferr)
+		}
+		if len(frames) > 0 {
+			ackMsg, err = DecodePayload(frames[0])
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, ok := ackMsg.(*HelloAck); !ok {
+		t.Fatalf("expected *HelloAck, got %T", ackMsg)
+	}
+
+	// Now be silent — the server should time out and exit.
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected timeout error from silent peer, got nil")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "timeout") && !strings.Contains(err.Error(), "deadline") {
+			t.Fatalf("expected timeout-related error, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session did not exit after liveness timeout")
 	}
 }
