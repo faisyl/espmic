@@ -31,9 +31,9 @@ static const char *TAG = "control";
 #define RECONNECT_MIN_MS   1000
 #define RECONNECT_MAX_MS   16000
 #define READ_TIMEOUT_MS    5000     /* bounded read; drives keepalive ping */
-#define KEEPALIVE_IDLE_MS  15000    /* send a device ping after this idle time */
-#define CONTROL_DEAD_MS    45000    /* no data from server this long => link dead, reconnect.
-                                     * Server heartbeats every 30 s and answers our pings, so a
+#define KEEPALIVE_PING_MS  10000    /* send a guaranteed periodic ping every 10s */
+#define CONTROL_DEAD_MS    30000    /* no data from server this long => link dead, reconnect.
+                                     * Server heartbeats every 10 s and answers our pings, so a
                                      * healthy link always has RX well inside this window. */
 #define CONTROL_LOSS_GRACE_MS 3000  /* stop an active stream after loss (spec 14) */
 
@@ -579,7 +579,7 @@ static void run_session(void)
         }
         if (r == 0) {
             TickType_t now = xTaskGetTickCount();
-            /* Dead-link detection: a healthy server heartbeats every 30 s and
+            /* Dead-link detection: a healthy server heartbeats every 10 s and
              * answers our pings, so we always receive *something* well inside
              * CONTROL_DEAD_MS. If we haven't, the link is half-open (e.g. the
              * server closed but our read never errored) — drop it and let the
@@ -590,10 +590,9 @@ static void run_session(void)
                          CONTROL_DEAD_MS);
                 break;
             }
-            /* Keepalive: ping if the link has been silent a while. A failed
-             * write means the socket is gone — reconnect immediately. */
-            if ((now - last_rx) > pdMS_TO_TICKS(KEEPALIVE_IDLE_MS) &&
-                (now - last_ping) > pdMS_TO_TICKS(KEEPALIVE_IDLE_MS)) {
+            /* Keepalive: guaranteed periodic ping every KEEPALIVE_PING_MS.
+             * A failed write means the socket is gone — reconnect immediately. */
+            if ((now - last_ping) > pdMS_TO_TICKS(KEEPALIVE_PING_MS)) {
                 if (send_ping() != ESP_OK) {
                     ESP_LOGW(TAG, "keepalive ping write failed; reconnecting");
                     break;

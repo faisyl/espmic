@@ -18,9 +18,9 @@ type Authenticator interface {
 }
 
 // controlLivenessTimeout is the rolling read deadline applied to the control
-// connection after handshake. It must exceed the heartbeat interval (30s) and
-// match the client dead-link detector (CONTROL_DEAD_MS=45000, commit d9ea42a).
-var controlLivenessTimeout = 45 * time.Second
+// connection after handshake. It must exceed the heartbeat interval (10s) and
+// match the client dead-link detector (CONTROL_DEAD_MS=30000).
+var controlLivenessTimeout = 30 * time.Second
 
 // Session implements the server side of a device control connection
 // (spec §7). It runs over any net.Conn so tests can use a fake. The server
@@ -157,7 +157,7 @@ func (s *Session) Run(ctx context.Context) error {
 		s.onReady(s)
 	}
 
-	hb := time.NewTicker(30 * time.Second)
+	hb := time.NewTicker(10 * time.Second)
 	defer hb.Stop()
 
 	errCh := make(chan error, 1)
