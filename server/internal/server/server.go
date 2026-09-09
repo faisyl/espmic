@@ -231,10 +231,17 @@ func (s *Server) controlLoop(ln net.Listener) {
 		sess.SetOnMsg(s.ctrl.Handler())
 		sess.SetOnReady(s.ctrl.OnReady)
 		sess.SetOnClose(func(sess *control.Session) {
-			s.OnDeviceDisconnect(sess.DeviceID())
+			// Only tear down presence if this session is still the device's
+			// current one. A rebooted device reconnects on a new socket before
+			// its stale pre-reboot connection is cleaned up; that stale session
+			// ending must not fail the new session's streams or mark the
+			// (still-connected) device offline. UnregisterIf both checks and
+			// removes atomically, so it doubles as the unregister.
+			if s.ctrl.UnregisterIf(sess.DeviceID(), sess) {
+				s.OnDeviceDisconnect(sess.DeviceID())
+			}
 		})
 		go func() {
-			defer s.ctrl.Unregister(sess.DeviceID())
 			if err := sess.Run(s.ctx); err != nil {
 				// Swallowed-error fix: log non-clean disconnects so auth/decode
 				// failures become visible (why the device peer-closed).

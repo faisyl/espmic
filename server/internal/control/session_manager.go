@@ -71,6 +71,22 @@ func (m *SessionManager) Unregister(deviceID string) {
 	delete(m.sessions, deviceID)
 }
 
+// UnregisterIf removes the device's session only if it is still s — i.e. s is
+// the current live session, not a stale one that a reconnect already replaced.
+// Returns true when s was the current session (so the caller should tear down
+// presence). A device that reboots reconnects on a new socket before its old
+// connection is cleaned up; the stale session's teardown must not evict the new
+// session or mark the (still-connected) device offline.
+func (m *SessionManager) UnregisterIf(deviceID string, s *Session) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cur, ok := m.sessions[deviceID]; ok && cur == s {
+		delete(m.sessions, deviceID)
+		return true
+	}
+	return false
+}
+
 // IsConnected reports whether a live session exists for deviceID.
 func (m *SessionManager) IsConnected(deviceID string) bool {
 	m.mu.Lock()

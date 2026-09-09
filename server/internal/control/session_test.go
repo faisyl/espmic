@@ -294,3 +294,37 @@ func TestStreamStoppedStatsField(t *testing.T) {
 		t.Fatalf("roundtrip stats = %+v", ss.Stats)
 	}
 }
+
+// TestSessionManagerUnregisterIfStaleVsCurrent locks in the reconnect-presence
+// fix: when a device reboots and reconnects on a new session before its stale
+// pre-reboot session is cleaned up, the stale session ending must NOT evict the
+// new (current) session — otherwise the device is wrongly marked offline while
+// still connected.
+func TestSessionManagerUnregisterIfStaleVsCurrent(t *testing.T) {
+	m := NewSessionManager()
+	a := NewSession(newChanConn(), &fakeAuth{ok: true}, time.Now, nil)
+	b := NewSession(newChanConn(), &fakeAuth{ok: true}, time.Now, nil)
+	a.deviceID = "d1"
+	b.deviceID = "d1"
+
+	m.OnReady(a) // first connection
+	m.OnReady(b) // device reconnected: b replaces a as current
+
+	if !m.IsConnected("d1") {
+		t.Fatal("d1 should be connected")
+	}
+	// Stale session a ending must be a no-op and must not report teardown.
+	if m.UnregisterIf("d1", a) {
+		t.Fatal("stale session must not be treated as current")
+	}
+	if !m.IsConnected("d1") {
+		t.Fatal("current session b must remain after stale a ends")
+	}
+	// Current session b ending tears down and reports it.
+	if !m.UnregisterIf("d1", b) {
+		t.Fatal("current session should report teardown")
+	}
+	if m.IsConnected("d1") {
+		t.Fatal("d1 should be gone after current session ends")
+	}
+}
