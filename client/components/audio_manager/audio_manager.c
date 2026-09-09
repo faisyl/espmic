@@ -221,6 +221,10 @@ esp_err_t audio_manager_start_stream(const audio_stream_params_t *params)
         .channels = params->channels,
         .bitrate = (int)bitrate,
         .complexity = g.cfg.complexity,
+        /* Adaptive gain: the MEMS mic's raw level is very low, so track the
+         * signal and boost toward a target with fast-attack/slow-release +
+         * a noise gate. Replaces the fixed gain_q8 boost. */
+        .agc = 1,
         .vbr = params->vbr ? 1 : 0,
         .fec = params->fec ? 1 : 0,
         .dtx = params->dtx ? 1 : 0,

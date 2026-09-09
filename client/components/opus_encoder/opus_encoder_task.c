@@ -30,11 +30,46 @@ static const char *TAG = "opus_task";
  * true post-encode headroom so this can be trimmed later if desired. */
 #define OPUS_TASK_STACK 40960
 
+/*
+ * Automatic Gain Control (AGC).
+ *
+ * The ICS43434 MEMS mic outputs speech at roughly -50 dBFS, so a straight
+ * 24->16 narrowing (or the old fixed +12 dB) is far too quiet. The AGC tracks
+ * the per-frame peak and adapts a digital gain to hold the output near a target
+ * level with headroom, so normal speech is loud without loud/close sounds
+ * clipping. Gains are expressed in the same units as gain_q8 (256 = unity,
+ * applied as sample*g >> 16) so both paths share the narrowing math.
+ *
+ * Fast attack (drop gain quickly when a loud sound arrives, before it clips) and
+ * slow release (raise gain gently when it goes quiet, so the noise floor doesn't
+ * pump). A noise gate freezes the gain during near-silence so room noise isn't
+ * cranked up between words. A hard int16 clamp is the final safety limiter.
+ */
+#define AGC_TARGET_PEAK   6000   /* target int16 output peak (~-14.7 dBFS headroom) */
+#define AGC_G_MIN         256    /* unity (24->16 full-scale); never attenuate below this */
+#define AGC_G_MAX         20000  /* ~+38 dB over unity; bounds noise amplification */
+#define AGC_NOISE_FLOOR   30000  /* 24-bit peak below this = silence -> hold gain (~-49 dBFS) */
+#define AGC_ATTACK_NUM    160    /* /256 per frame: fast gain reduction on loud onsets */
+#define AGC_RELEASE_NUM   8      /* /256 per frame: slow gain rise (~0.6 s) when quiet */
+
+/*
+ * DC blocker. The ICS43434 presents a large constant DC bias (measured ~-9.6%
+ * of full scale) on top of the audio, which otherwise dominates the level and
+ * starves the real signal (and would pin the AGC to the DC). A first-order
+ * high-pass removes it: y[n] = x[n] - x[n-1] + R*y[n-1], per channel.
+ * R = 0.999 (Q15 32735) => ~7.6 Hz cutoff at 48 kHz, well below speech.
+ */
+#define DC_BLOCK_R_Q15    32735
+#define MAX_CH            2
+
 struct opus_task_ctx {
     opus_task_config_t cfg;
     OpusEncoder       *enc;
     TaskHandle_t       task;
     volatile bool      running;
+    int32_t            agc_g;              /* current AGC gain (Q, 256=unity); state across frames */
+    int32_t            dc_prev_x[MAX_CH];  /* DC blocker: last input, per channel */
+    int64_t            dc_prev_y[MAX_CH];  /* DC blocker: last output, per channel */
 };
 
 /* Try to pull exactly one full frame (OPUS_FRAME_SAMPLES interleaved) from the
@@ -90,13 +125,66 @@ static void opus_task(void *arg)
             continue;
         }
 
-        /* Narrow the 24-bit-in-int32 samples to the int16 libopus expects
-         * with configurable digital gain. Combine the /256 reduction and
-         * gain into one wide-int op: v = frame * gain_q8 >> 16.
-         * gain_q8=256 => v = frame>>8 (unity, old correct behavior).
-         * gain_q8=1024 => v = frame/64 (4x louder = +12 dB). */
+        /* Remove the mic's DC bias in place before any level analysis so the
+         * peak/AGC and the final narrowing all operate on the real (AC) signal.
+         * channels is 1 or 2; state is kept per channel across frames. */
+        int nch = ctx->cfg.channels > 0 && ctx->cfg.channels <= MAX_CH
+                      ? ctx->cfg.channels : 1;
         for (int i = 0; i < OPUS_FRAME_SAMPLES; i++) {
-            int64_t v = ((int64_t)frame[i] * ctx->cfg.gain_q8 + (1 << 15)) >> 16;
+            int ch = i % nch;
+            int32_t x = frame[i];
+            int64_t y = (int64_t)x - ctx->dc_prev_x[ch]
+                        + ((DC_BLOCK_R_Q15 * ctx->dc_prev_y[ch]) >> 15);
+            ctx->dc_prev_x[ch] = x;
+            ctx->dc_prev_y[ch] = y;
+            frame[i] = (int32_t)y;
+        }
+
+        /* Choose the digital gain for this frame. AGC adapts it to the signal
+         * (see the AGC_* constants above); otherwise a static gain_q8 is used.
+         * Both are applied as v = frame * g >> 16, where g=256 is unity 24->16. */
+        int32_t g;
+        if (ctx->cfg.agc) {
+            /* Peak of this 24-bit-in-int32 frame (both channels). Also track
+             * sum/min/max to expose any DC offset in the debug log (a large
+             * non-zero mean means the mic pipeline needs DC blocking). */
+            int32_t peak = 1, fmin = frame[0], fmax = frame[0];
+            int64_t sum = 0;
+            for (int i = 0; i < OPUS_FRAME_SAMPLES; i++) {
+                int32_t s = frame[i];
+                int32_t a = s < 0 ? -s : s;
+                if (a > peak) peak = a;
+                if (s < fmin) fmin = s;
+                if (s > fmax) fmax = s;
+                sum += s;
+            }
+            int32_t mean = (int32_t)(sum / OPUS_FRAME_SAMPLES);
+            /* Gain that would bring this peak to the target: peak*g>>16 = target. */
+            int32_t desired = (int32_t)(((int64_t)AGC_TARGET_PEAK << 16) / peak);
+            if (desired > AGC_G_MAX) desired = AGC_G_MAX;
+            if (desired < AGC_G_MIN) desired = AGC_G_MIN;
+            if (peak < AGC_NOISE_FLOOR) desired = ctx->agc_g; /* silence: hold */
+
+            /* Fast attack when reducing gain, slow release when raising it. */
+            int32_t num = (desired < ctx->agc_g) ? AGC_ATTACK_NUM : AGC_RELEASE_NUM;
+            ctx->agc_g += (int32_t)(((int64_t)(desired - ctx->agc_g) * num) >> 8);
+            if (ctx->agc_g < AGC_G_MIN) ctx->agc_g = AGC_G_MIN;
+            if (ctx->agc_g > AGC_G_MAX) ctx->agc_g = AGC_G_MAX;
+            g = ctx->agc_g;
+
+            if ((dbg_n % 50u) == 0u) {
+                ESP_LOGI(TAG, "agc: peak=%d gain=%d mean=%d min=%d max=%d ac=%d",
+                         (int)peak, (int)g, (int)mean, (int)fmin, (int)fmax,
+                         (int)(fmax - fmin));
+            }
+        } else {
+            g = ctx->cfg.gain_q8;
+        }
+
+        /* Narrow 24-bit-in-int32 to the int16 libopus expects, applying g. The
+         * clamp is the final hard limiter against any residual over-range. */
+        for (int i = 0; i < OPUS_FRAME_SAMPLES; i++) {
+            int64_t v = ((int64_t)frame[i] * g + (1 << 15)) >> 16;
             if (v > 32767) v = 32767;
             if (v < -32768) v = -32768;
             pcm16[i] = (opus_int16)v;
@@ -144,6 +232,7 @@ esp_err_t opus_task_start(const opus_task_config_t *cfg, opus_task_handle_t *out
     if (ctx->cfg.bitrate == 0)     ctx->cfg.bitrate = 128000;
     if (ctx->cfg.complexity == 0)  ctx->cfg.complexity = 5;
     if (ctx->cfg.gain_q8 == 0)     ctx->cfg.gain_q8 = 1024;
+    ctx->agc_g = AGC_G_MIN;  /* start at unity; release ramps up to the signal */
 
     int err = OPUS_OK;
     ctx->enc = opus_encoder_create(ctx->cfg.sample_rate, ctx->cfg.channels,

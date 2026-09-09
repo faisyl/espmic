@@ -43,7 +43,8 @@ typedef struct {
     int                channels;      /* 2 */
     int                bitrate;       /* e.g. 128000 */
     int                complexity;    /* 5..8; 0 => default (5) */
-    uint16_t           gain_q8;       /* digital gain Q8 (256=1.0); 0 => default (1024 ≈ +12 dB) */
+    uint16_t           gain_q8;       /* static digital gain (256=1.0 unity 24->16); used only when agc==0 */
+    int                agc;           /* nonzero => automatic gain control (adaptive), overrides gain_q8 */
     int                vbr;           /* nonzero => VBR (spec Section 7) */
     int                fec;           /* inband FEC; 0 initially */
     int                dtx;           /* 0 initially */
