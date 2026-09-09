@@ -21,6 +21,8 @@ type Authenticator interface {
 // connection after handshake. It must exceed the heartbeat interval (30s) and
 // match the client dead-link detector (CONTROL_DEAD_MS=45000, commit d9ea42a).
 var controlLivenessTimeout = 45 * time.Second
+
+// Session implements the server side of a device control connection
 // (spec §7). It runs over any net.Conn so tests can use a fake. The server
 // flow (spec §7) is driven by Run:
 //
