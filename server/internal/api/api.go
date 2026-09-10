@@ -344,23 +344,24 @@ func (h *Handlers) handleDeviceRename(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
 	}
-	if req.DisplayName == "" {
+	name := strings.TrimSpace(req.DisplayName)
+	if name == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "display_name cannot be empty"})
 		return
 	}
-	if err := h.srv.SetDeviceDisplayName(id, req.DisplayName); err != nil {
-		switch {
-		case errors.Is(err, device.ErrDeviceNotFound):
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
-		case err == device.ErrDeviceNotFound:
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
-			return
-		default:
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
+	if len(name) > 64 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "display_name too long (max 64)"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "display_name": req.DisplayName})
+	if err := h.srv.SetDeviceDisplayName(id, name); err != nil {
+		if errors.Is(err, device.ErrDeviceNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "display_name": name})
 }
 
 func (h *Handlers) handleStreamStats(w http.ResponseWriter, r *http.Request) {

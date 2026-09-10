@@ -131,6 +131,7 @@ tr:last-child td{border-bottom:none}
     <div id="recordings-body">
       <div class="empty" role="status"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg><br>No recordings</div>
     </div>
+    <audio id="rec-player" controls preload="none" style="width:100%;margin-top:.75rem" hidden></audio>
   </section>
 
   <section class="panel" aria-labelledby="h-levels" style="grid-column:1/-1">
@@ -713,10 +714,18 @@ tr:last-child td{border-bottom:none}
        var mins = Math.floor(durationSec/60);
        var secs = Math.floor(durationSec)%60;
        var timeStr = (mins<10?"0":"")+mins+":"+(secs<10?"0":"")+secs;
-       h+='<tr><td class="mono">'+esc(r.recording_id)+'</td><td class="mono">'+esc(r.stream_id)+'</td><td>'+(r.start_time?new Date(r.start_time).toLocaleString():"—")+'</td><td>'+timeStr+'</td><td>'+fmt(r.bytes_stored)+' bytes</td><td><a href="/api/recordings/'+esc(r.recording_id)+'/download" download>Download</a></td></tr>';
+       h+='<tr><td class="mono">'+esc(r.recording_id)+'</td><td class="mono">'+esc(r.stream_id)+'</td><td>'+(r.start_time?new Date(r.start_time).toLocaleString():"—")+'</td><td>'+timeStr+'</td><td>'+fmt(r.bytes_stored)+' bytes</td><td><button class="btn btn-primary" onclick="playRecording(\''+esc(r.recording_id)+'\')" aria-label="Play recording '+esc(r.recording_id)+'"><svg viewBox="0 0 24 24" aria-hidden="true" style="width:12px;height:12px"><path d="M8 5v14l11-7z"/></svg> Play</button> <a href="/api/recordings/'+esc(r.recording_id)+'/download" download>Download</a></td></tr>';
      }
      h+='</tbody></table>';
      el.innerHTML=h;
+   }
+
+   /* ---- play a recording in the shared audio element ---- */
+   function playRecording(recId){
+     var player=document.getElementById("rec-player");
+     player.src="/api/recordings/"+encodeURIComponent(recId)+"/download";
+     player.hidden=false;
+     player.play().catch(function(err){showToast("Playback failed: "+err.message,true);});
    }
 
    /* ---- rename device ---- */
@@ -742,6 +751,12 @@ tr:last-child td{border-bottom:none}
        nameSpan.textContent=currentName;
      });
    }
+
+   /* Expose the two inline-onclick handlers on window: the rest of the app runs
+      inside this IIFE, so inline onclick="" (which resolves against global
+      scope) cannot see functions declared here without this. */
+   window.playRecording=playRecording;
+   window.renameDevice=renameDevice;
 })();
  </script>
  </body>
