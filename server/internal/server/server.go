@@ -708,6 +708,15 @@ func (s *Server) DeviceGet(deviceID string) (*device.Device, error) {
 	return &d, nil
 }
 
+// SetDeviceDisplayName updates the device alias in the registry and
+// persists it (spec §6, alias only — DeviceID stays the internal key).
+func (s *Server) SetDeviceDisplayName(deviceID, name string) error {
+	if err := s.device.SetDisplayName(deviceID, name); err != nil {
+		return err
+	}
+	return s.repos.Devices.UpdateDisplayName(deviceID, name)
+}
+
 // RTPStreamStats returns the RTP statistics for a stream.
 func (s *Server) RTPStreamStats(streamID string) (rtp.Stats, bool) {
 	return s.rtp.StreamStats(streamID)

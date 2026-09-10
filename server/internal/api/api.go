@@ -50,6 +50,8 @@ type Server interface {
 	GetDeviceStatus(ctx context.Context, deviceID string) (control.Message, error)
 	// Device final stats (GAP-04/19)
 	DeviceFinalStats(streamID string) (*control.StreamStoppedStats, bool)
+	// Device alias (rename)
+	SetDeviceDisplayName(deviceID, name string) error
 }
 
 // Handlers holds the server reference and implements each §15 endpoint.
@@ -93,6 +95,7 @@ func RegisterRoutes(mux *http.ServeMux, cfg *config.Config, srv Server) {
 	mux.HandleFunc("GET /api/recordings", h.handleRecordings)
 	mux.HandleFunc("GET /api/recordings/{id}", h.handleRecording)
 	mux.HandleFunc("GET /api/recordings/{id}/download", h.handleRecordingDownload)
+	mux.HandleFunc("PATCH /api/devices/{id}", h.handleDeviceRename)
 	mux.HandleFunc("GET /api/metrics", h.handleMetrics)
 }
 
@@ -322,6 +325,42 @@ func (h *Handlers) handleStream(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) handleStreams(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.srv.StreamList())
+}
+
+func (h *Handlers) handleDeviceRename(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch && r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing device id"})
+		return
+	}
+	var req struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	if req.DisplayName == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "display_name cannot be empty"})
+		return
+	}
+	if err := h.srv.SetDeviceDisplayName(id, req.DisplayName); err != nil {
+		switch {
+		case errors.Is(err, device.ErrDeviceNotFound):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+		case err == device.ErrDeviceNotFound:
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+			return
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "display_name": req.DisplayName})
 }
 
 func (h *Handlers) handleStreamStats(w http.ResponseWriter, r *http.Request) {

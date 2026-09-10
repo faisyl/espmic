@@ -89,6 +89,10 @@ func (f *fakeSrv) DeviceFinalStats(streamID string) (*control.StreamStoppedStats
 	return nil, false
 }
 
+func (f *fakeSrv) SetDeviceDisplayName(deviceID, name string) error {
+	return nil
+}
+
 // TestHealth verifies the S0 health endpoint (spec §15).
 func TestHealth(t *testing.T) {
 	mux := http.NewServeMux()

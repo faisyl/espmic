@@ -123,6 +123,20 @@ func (r *Registry) Online(id string) bool {
 	return ok
 }
 
+// SetDisplayName updates the alias (DisplayName) without disturbing online
+// state or credentials (spec §6, alias only — DeviceID stays the key).
+func (r *Registry) SetDisplayName(id, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.devices[id]
+	if !ok {
+		return ErrDeviceNotFound
+	}
+	d.DisplayName = name
+	r.devices[id] = d
+	return nil
+}
+
 // LastSeen returns the last online timestamp for id.
 func (r *Registry) LastSeen(id string) (time.Time, bool) {
 	r.mu.RLock()

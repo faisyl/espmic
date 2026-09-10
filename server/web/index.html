@@ -126,6 +126,13 @@ tr:last-child td{border-bottom:none}
     </div>
   </section>
 
+  <section class="panel" aria-labelledby="h-recordings" style="grid-column:1/-1">
+    <h2 id="h-recordings">Recordings <span class="badge" id="recording-count">0</span></h2>
+    <div id="recordings-body">
+      <div class="empty" role="status"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg><br>No recordings</div>
+    </div>
+  </section>
+
   <section class="panel" aria-labelledby="h-levels" style="grid-column:1/-1">
     <h2 id="h-levels">Live Levels
       <div class="meter-legend" style="margin-left:auto">
@@ -225,7 +232,7 @@ tr:last-child td{border-bottom:none}
     for(var i=0;i<devices.length;i++){
       var d=devices[i];
       var onl=typeof d.Status==="string"&&d.Status.toLowerCase()==="online";
-      h+='<tr><td class="mono">'+esc(d.DeviceID)+'</td><td>'+esc(d.DisplayName||"—")+'</td>';
+      h+='<tr><td class="mono">'+esc(d.DeviceID)+'</td><td><span class="rename-name" data-id="'+esc(d.DeviceID)+'">'+esc(d.DisplayName||"—")+'</span> <button class="btn" onclick="renameDevice(\'"+esc(d.DeviceID)+"\')" aria-label="Rename '+esc(d.DeviceID)+'">Rename</button></td>';
       h+='<td><span class="status-dot '+(onl?"online":"offline")+'" role="img" aria-label="'+(onl?"online":"offline")+'"></span> '+(onl?"Online":"Offline")+'</td>';
       h+='<td class="mono">'+esc(d.Firmware||"—")+'</td>';
       h+='<td>';
@@ -579,6 +586,7 @@ tr:last-child td{border-bottom:none}
   /* ---- polling ---- */
   function poll(){
     api("/api/devices").then(function(d){renderDevices(d)}).catch(function(){});
+    api("/api/recordings").then(function(r){renderRecordings(r||[])}).catch(function(){});
     api("/api/metrics").then(function(m){renderMetrics(m)}).catch(function(){});
     /* NIT-1: fetch all streams from GET /api/streams (array); degrade on 404 */
     api("/api/streams").then(function(arr){
@@ -682,10 +690,59 @@ tr:last-child td{border-bottom:none}
     setVolume(e.target.value/100);
   });
 
-  /* ---- utils ---- */
-  function esc(s){var d=document.createElement("span");d.textContent=s;return d.innerHTML;}
-  function fmt(n){return n==null?"—":Number(n).toLocaleString();}
+/* ---- utils ---- */
+   function esc(s){var d=document.createElement("span");d.textContent=s;return d.innerHTML;}
+   function fmt(n){return n==null?"—":Number(n).toLocaleString();}
+
+   /* ---- recordings panel ---- */
+   function renderRecordings(list){
+     var el=document.getElementById("recordings-body");
+     var count=document.getElementById("recording-count");
+     count.textContent=list.length;
+     if(!list.length){
+       el.innerHTML='<div class="empty" role="status"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg><br>No recordings</div>';
+       return;
+     }
+     var h='<table role="table"><thead><tr><th scope="col">Recording</th><th scope="col">Device</th><th scope="col">Start</th><th scope="col">Duration</th><th scope="col">Size</th><th scope="col">Action</th></tr></thead><tbody>';
+     for(var i=0;i<list.length;i++){
+       var r=list[i];
+       var durationSec = 0;
+       if(r.end_time && r.start_time){
+         durationSec = (new Date(r.end_time) - new Date(r.start_time))/1000;
+       }
+       var mins = Math.floor(durationSec/60);
+       var secs = Math.floor(durationSec)%60;
+       var timeStr = (mins<10?"0":"")+mins+":"+(secs<10?"0":"")+secs;
+       h+='<tr><td class="mono">'+esc(r.recording_id)+'</td><td class="mono">'+esc(r.stream_id)+'</td><td>'+(r.start_time?new Date(r.start_time).toLocaleString():"—")+'</td><td>'+timeStr+'</td><td>'+fmt(r.bytes_stored)+' bytes</td><td><a href="/api/recordings/'+esc(r.recording_id)+'/download" download>Download</a></td></tr>';
+     }
+     h+='</tbody></table>';
+     el.innerHTML=h;
+   }
+
+   /* ---- rename device ---- */
+   function renameDevice(deviceId){
+     var nameSpan=document.querySelector('.rename-name[data-id="'+esc(deviceId)+'"]');
+     var currentName=nameSpan.textContent.trim();
+     var newName=prompt("Enter new display name for device "+deviceId+":", currentName);
+     if(newName===null||newName.trim()==="") return;
+     newName=newName.trim();
+     nameSpan.textContent='Renaming…';
+     fetch("/api/devices/"+esc(deviceId),{
+       method:"PATCH",
+       headers:{"Content-Type":"application/json"},
+       body:JSON.stringify({display_name:newName})
+     }).then(function(r){
+       if(!r.ok) return r.json().then(function(e){throw new Error((e.error||r.status)+" ("+r.status+")")});
+       return r.json();
+     }).then(function(data){
+       showToast("Device renamed: "+data.display_name, false);
+       poll();
+     }).catch(function(err){
+       showToast("Rename failed: "+err.message, true);
+       nameSpan.textContent=currentName;
+     });
+   }
 })();
-</script>
-></body>
-</html>
+ </script>
+ </body>
+ </html>

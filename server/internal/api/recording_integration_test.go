@@ -149,6 +149,10 @@ func (s *flowFakeSrv) GetStream(streamID string) (*stream.Stream, error) {
 	return st, nil
 }
 
+func (s *flowFakeSrv) SetDeviceDisplayName(deviceID, name string) error {
+	return nil
+}
+
 func (s *flowFakeSrv) GetRecording(recID string) (map[string]any, error) {
 	row := s.db.QueryRow(`SELECT recording_id,stream_id,sample_rate,channels,codec,start_time,end_time,bytes_stored,uri FROM recordings WHERE recording_id=?`, recID)
 	var rID, sID, codec string

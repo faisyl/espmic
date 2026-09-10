@@ -180,6 +180,15 @@ func (r *RecordingRepo) Finalize(recID string, end time.Time, bytes int64, uri s
 	return err
 }
 
+// UpdateDisplayName sets the device display name (alias) without touching
+// credential hash, firmware, capabilities, status or last_seen (spec §6).
+func (r *DeviceRepo) UpdateDisplayName(deviceID, displayName string) error {
+	_, err := r.db.Exec(
+		`UPDATE devices SET display_name=? WHERE device_id=?`,
+		displayName, deviceID)
+	return err
+}
+
 // DeviceStatsRepo persists device-final stream stats from stream_stopped (GAP-04/19).
 type DeviceStatsRepo struct {
 	db *sql.DB
