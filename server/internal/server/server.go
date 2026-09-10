@@ -687,7 +687,10 @@ func (s *Server) finalizeOpusRecorder(streamID string) {
 		slog.Error("opus recorder: finalize failed", "stream_id", streamID, "err", err)
 		return
 	}
-	recID := streamID + "-opus-rec"
+	// Must match the recording_id used at Create (streamID+"-opus", see the
+	// opus-recorder setup) — a mismatched id here silently no-ops the UPDATE,
+	// leaving the row with no uri/bytes and the recording unplayable.
+	recID := streamID + "-opus"
 	_ = s.recRepo.Finalize(recID, time.Now(), bytes, uri)
 }
 
@@ -975,11 +978,23 @@ func (s *Server) DownloadRecording(recordingID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	uri, ok := rec["uri"].(string)
-	if !ok || uri == "" {
-		return "", fmt.Errorf("recording file not available")
+	// Prefer the persisted uri when its file still exists.
+	if uri, ok := rec["uri"].(string); ok && uri != "" {
+		if _, statErr := os.Stat(uri); statErr == nil {
+			return uri, nil
+		}
 	}
-	return uri, nil
+	// Fallback: opus recordings are written to <RecordingsDir>/<stream_id>.opus.
+	// Historical rows can lack a uri (a finalize-id mismatch, since fixed) and
+	// old rows may point at deleted .wav files, so resolve the on-disk opus file
+	// by stream_id when the uri is missing or gone.
+	if streamID, ok := rec["stream_id"].(string); ok && streamID != "" {
+		p := fmt.Sprintf("%s/%s.opus", s.cfg.RecordingsDir, streamID)
+		if _, statErr := os.Stat(p); statErr == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("recording file not available")
 }
 
 // ListRecordings returns all recording metadata from the database.
